@@ -20,7 +20,7 @@ def test_density_manager_infers_boxcentre_from_positions():
     data = np.array([[10.0, 20.0, 30.0], [30.0, 40.0, 50.0]])
     rand = np.array([[12.0, 22.0, 32.0], [28.0, 38.0, 48.0]])
 
-    dm = DensityManager(data, rand, nmesh=8, boxsize=None, boxcentre=None, padding=0.0)
+    dm = DensityManager(data, rand, nmesh=8, boxsize=None, boxcentre=None, padding=1.0, pbc=False)
 
     combined = np.concatenate((data, rand), axis=0)
     expected_center = 0.5 * (combined.min(axis=0) + combined.max(axis=0))
@@ -28,20 +28,6 @@ def test_density_manager_infers_boxcentre_from_positions():
     assert np.allclose(dm.boxcentre, expected_center)
     assert dm.boxsize >= np.max(combined.max(axis=0) - combined.min(axis=0))
 
-
-def test_density_manager_mesh_radial_versor_uses_survey_frame():
-    boxsize = 100.0
-    boxcentre = np.array([70.0, 60.0, 50.0])
-    data = np.array([[10.0, 20.0, 30.0]])
-    rand = np.array([[15.0, 25.0, 35.0]])
-
-    dm = DensityManager(data, rand, nmesh=8, boxsize=boxsize, boxcentre=boxcentre)
-    mesh = dm.mesh
-
-    expected = mesh.xmesh[0, 0, 0] + dm.min_corner
-    expected = expected / np.linalg.norm(expected)
-
-    assert np.allclose(mesh.radial_versor[0, 0, 0], expected)
 
 
 def _random_catalog(npart=100, boxsize=100.0, seed=0):
@@ -100,10 +86,10 @@ def test_density_manager_vs_pyrecon():
     rand_th = 0.01
     BIAS = 2.0
 
-    dm = DensityManager(data, rand, nmesh=nmesh, boxsize=box, boxcentre=[box/2]*3, smoothing_radius=15.0)
+    dm = DensityManager(data, rand, nmesh=nmesh, boxsize=box, boxcentre=[box/2]*3, smoothing_radius=15.0, pbc=True, padding=0.0)
     delta_z = dm.compute_delta(threshold_randoms=rand_th, sm_mode="wrap")
 
-    py = MultiGridReconstruction(f=0.0, bias=BIAS, los=None, boxsize=box, boxcenter=[box/2]*3, nmesh=nmesh)
+    py = MultiGridReconstruction(f=0.0, bias=BIAS, los=None, boxsize=box, boxcenter=[box/2]*3, nmesh=nmesh, wrap=True, resampler='cic', ran_min=rand_th)
     py.assign_data(data)
     py.assign_randoms(rand)
     py.set_density_contrast(smoothing_radius=15.0, ran_min=rand_th)

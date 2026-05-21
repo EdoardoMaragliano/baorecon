@@ -146,6 +146,7 @@ def test_fmg_vs_fft_and_vcycle():
     N = 32
     L = 1.0
     x = np.linspace(0, L, N, endpoint=False)
+    boxcenter = np.array([L / 2.0, L / 2.0, L / 2.0], dtype=np.float64)
     X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
     k = 2.0 * np.pi / L
     source = np.sin(k * X)
@@ -163,7 +164,7 @@ def test_fmg_vs_fft_and_vcycle():
 
     from zeldareco.displacement_solver.multigrid_solver import _RawMultigrid as MultigridSolver
 
-    solver = MultigridSolver(N, L, use_plane_parallel=True)
+    solver = MultigridSolver(N_fine=N, boxsize=L, boxcenter=boxcenter, use_plane_parallel=True)
 
     v_vcycle = solver.solve(source, beta=0.0, n_cycles=10, n_smooth=2, damping=0.4)
     v_fmg = solver.solve_fmg(source, beta=0.0, v_cycles=2, n_smooth=2, damping=0.4)

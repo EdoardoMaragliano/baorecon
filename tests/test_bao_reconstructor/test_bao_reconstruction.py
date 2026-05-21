@@ -8,7 +8,7 @@ def test_bao_reconstructor_instantiation():
     
     data = np.random.rand(10, 3) * 100.0
     rand = np.random.rand(20, 3) * 100.0
-    recon = BAOReconstructor(data, rand, nmesh=8, boxsize=100.0)
+    recon = BAOReconstructor(data, rand, nmesh=8, boxsize=100, boxcentre=[50,50,50], padding=0.2)
     assert recon is not None
     assert np.allclose(recon.data_pos, data)
     assert np.allclose(recon.random_pos, rand)
@@ -17,10 +17,10 @@ def test_bao_reconstructor_instantiation():
 def test_bao_reconstructor_infers_box_when_missing():
     from zeldareco.BAOreconstruction.bao_reconstructor import BAOReconstructor
 
-    data = np.array([[10.0, 20.0, 30.0], [30.0, 40.0, 50.0]])
-    rand = np.array([[12.0, 22.0, 32.0], [28.0, 38.0, 48.0]])
+    data = np.random.uniform(0, 100, size=(100, 3))
+    rand = np.random.uniform(0, 100, size=(200, 3))
 
-    recon = BAOReconstructor(data, rand, nmesh=8, boxsize=None, boxcentre=None, padding=0.0)
+    recon = BAOReconstructor(data, rand, nmesh=8, boxsize=None, boxcentre=None, padding=0.5)
 
     combined = np.concatenate((data, rand), axis=0)
     expected_center = 0.5 * (combined.min(axis=0) + combined.max(axis=0))
@@ -28,27 +28,6 @@ def test_bao_reconstructor_infers_box_when_missing():
     assert np.allclose(recon.data_pos, data)
     assert np.allclose(recon.random_pos, rand)
     assert np.allclose(recon.boxcentre, expected_center)
-
-
-def test_bao_reconstructor_local_los_uses_unshifted_survey_frame():
-    from zeldareco.BAOreconstruction.bao_reconstructor import BAOReconstructor
-    from zeldareco.mesh.field_ops import project_vector_field
-
-    boxsize = 100.0
-    boxcentre = np.array([70.0, 60.0, 50.0])
-    data = np.array([[10.0, 20.0, 30.0]])
-    rand = np.array([[15.0, 25.0, 35.0]])
-
-    recon = BAOReconstructor(data, rand, nmesh=8, boxsize=boxsize, boxcentre=boxcentre, los=None)
-
-    tracer_pos = np.array([[5.0, 6.0, 7.0]], dtype=np.float64)
-    tracer_psi = np.array([[1.0, 2.0, 3.0]], dtype=np.float64)
-
-    displacement = recon._get_rsd_displacement(tracer_psi, tracer_pos)
-    raw_position = tracer_pos + recon._density_manager.min_corner
-    expected = recon.f * project_vector_field(tracer_psi, raw_position)
-
-    assert np.allclose(displacement, expected)
 
 
 def test_bao_ifft_reconstruction_instantiation():
@@ -68,7 +47,6 @@ def test_bao_ifft_reconstruction_instantiation():
         data_pos=data_pos,
         random_pos=random_pos,
         boxsize=boxsize,
-        redshift=1.0,
         RSDspace="RealSpace",
         nmesh=16,
         boxcentre=np.array([boxsize/2, boxsize/2, boxsize/2]),

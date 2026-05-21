@@ -12,7 +12,7 @@ def test_fft_solver_lazy():
 
     solver = FFTSolver(delta, mesh)
     # Accessing potential/displacement should trigger _compute exactly once
-    with patch.object(solver, '_compute', wraps=solver._compute) as mocked:
+    with patch.object(solver, '_compute_displacement', wraps=solver._compute_displacement) as mocked:
         _ = solver.displacement
         _ = solver.displacement
         assert mocked.call_count == 1
