@@ -1,0 +1,63 @@
+catalog:
+  data_path: "/farmdisk1/emaragliano/EuclidLargeMocks/ELM-catalogues/ELM-pre-rec/target/0001/z1/0001_data_z1.fits"
+  random_path: "/farmdisk1/emaragliano/EuclidLargeMocks/ELM-randoms/target/z1/random_target_PDFz_EuclidLargeBox0001-0100_Rot30degCircle_m3_nosm_obsz_51x_z0.9-1.1.fits"
+  data_hdu: 1
+  random_hdu: 1
+
+columns:
+  coordinates:
+    ra: "RA"
+    dec: "DEC"
+    redshift: "REDSHIFT"
+  weights:
+    data: "WEIGHT"
+    random: "WEIGHT"
+  ids:
+    data: null
+    random: null
+  keep_cols:
+    - "RA"
+    - "DEC"
+    - "REDSHIFT"
+    - "WEIGHT"
+    #- "ID"
+
+coordinate_system:
+  input: "ra_dec_z"
+  frame: "icrs"
+  ra_dec_unit: "deg"
+  distance_unit: "Mpc/h"
+
+cosmology:
+  H0: 70.0
+  Om0: 0.237
+  Ob0: 0.041
+  Tcmb0: 2.73
+  name: "Euclid-like"
+
+reconstruction:
+  redshift: 1
+  RSDspace: "RedshiftSpace"
+  nmesh: 512
+  boxsize: null
+  boxcentre: null
+  padding: 100.0
+  los: null
+  R_sm: 15.0
+  pbc: false
+  rectype: "rec-sym"
+  f: 0.88
+  bias: 1.7
+  MAS: "CIC"
+  threshold_randoms: 0.7
+  solver_type: "multigrid"
+
+masking:
+  apply_mask: false
+
+output:
+  folder: "/home/emaragliano/myfarm-disk/LE3-reconstruction/test_pipeline_outputs"
+  naming_pattern: "rec_{name}_{solver}_n{nmesh}_z{z0:.2f}"
+  save_metadata: true
+
+catalog_name: "sample_survey"

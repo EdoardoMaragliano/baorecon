@@ -1,0 +1,14 @@
+matplotlib
+astropy
+tqdm
+cupy
+pypower
+camb
+pyrecon
+# Project-specific / non-PyPI in some environments:
+# pyACC
+# Pylians
+# MAS_library
+# Pk_library
+# readfof
+# pmesh
