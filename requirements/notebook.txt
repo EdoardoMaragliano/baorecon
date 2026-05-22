@@ -4,7 +4,7 @@ tqdm
 cupy
 pypower
 camb
-pyrecon
+git+https://github.com/cosmodesi/pyrecon.git@mpi
 # Project-specific / non-PyPI in some environments:
 # pyACC
 # Pylians

@@ -1,2 +1,2 @@
 pytest
-pyrecon
+git+https://github.com/cosmodesi/pyrecon.git@mpi
