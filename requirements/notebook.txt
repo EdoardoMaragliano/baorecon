@@ -1,9 +1,7 @@
 matplotlib
 astropy
 tqdm
-cupy
 pypower
-camb
 git+https://github.com/cosmodesi/pyrecon.git@mpi
 # Project-specific / non-PyPI in some environments:
 # pyACC
