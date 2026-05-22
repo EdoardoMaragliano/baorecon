@@ -17,6 +17,10 @@ class Mesh:
         self.nmesh = int(nmesh)
         self.boxsize = float(boxsize)
         self.dtype = np.dtype(dtype)
+        # line-of-sight specification: None, 'x', 'y', 'z' or radial
+        self.los = None if los is None else str(los).strip().lower()
+
+        self._validate_parameters()
 
         self.cell_size = self.boxsize / self.nmesh
 
@@ -28,11 +32,6 @@ class Mesh:
         # coordinates of the minimum corner of the box in the observed frame
         self.min_corner = self.boxcentre - self.boxsize / 2.0
         
-        # line-of-sight specification: None, 'x', 'y', 'z' or radial
-        self.los = None if los is None else str(los).strip().lower()
-
-        self._validate_parameters()
-
         if self.cell_size % 1 != 0:
             warnings.warn("cell_size is not an integer number.", UserWarning)
 
