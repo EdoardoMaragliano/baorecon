@@ -231,7 +231,7 @@ def test_bao_ifft_comparison_vs_pyrecon():
     )
     py_recon.assign_data(data_pos)
     py_recon.assign_randoms(random_pos)
-    py_recon.set_density_contrast(smoothing_radius=sm_rad, ran_min=rand_th)
+    py_recon.set_density_contrast(smoothing_radius=sm_rad)
     delta_pyrecon = np.asarray(py_recon.mesh_delta)
     
     # Compare delta fields: correlation should be high
