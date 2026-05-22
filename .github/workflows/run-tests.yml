@@ -12,16 +12,27 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.10' # O la versione che usi nel tuo ambiente locale
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin libfftw3-dev
 
       - name: Install dependencies
+        env:
+          MPICC: mpicc
         run: |
-          python -m pip install --upgrade pip
-          # Installa le tue dipendenze (assicurati di avere un file requirements.txt o pyproject.toml)
-          pip install -r requirements.txt
-          pip install pytest pytest-xdist scipy numba numpy
+          python -m pip install --upgrade pip setuptools wheel
+          
+          # QUESTO È IL COMANDO CHIAVE:
+          # Installa zeldareco in modalità editabile e i test requirements
+          pip install -e .[test]
+          
+          # Installa il resto (runtime già gestito da install_requires di setup.py)
+          pip install -r requirements/runtime.txt
 
       - name: Run tests
         run: |
-          # Esegue tutti i test in parallelo su tutti i core disponibili in GitHub
+          # Ora pytest troverà zeldareco perché è installato nell'ambiente!
           pytest -n auto tests/
