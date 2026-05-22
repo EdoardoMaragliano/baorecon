@@ -25,6 +25,9 @@ jobs:
         run: |
           python -m pip install --upgrade pip setuptools wheel
 
+          # Installa il plugin necessario per il flag -n
+          pip install pytest-xdist
+
           pip install git+https://github.com/cosmodesi/pyrecon.git@main
           
           # QUESTO È IL COMANDO CHIAVE:
