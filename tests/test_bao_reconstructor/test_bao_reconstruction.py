@@ -15,6 +15,7 @@ def test_bao_reconstructor_instantiation():
 
 
 def test_bao_reconstructor_infers_box_when_missing():
+    """Test boxsize and boxcenter are properly set when not provided"""
     from zeldareco.BAOreconstruction.bao_reconstructor import BAOReconstructor
 
     data = np.random.uniform(0, 100, size=(100, 3))

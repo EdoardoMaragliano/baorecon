@@ -38,6 +38,7 @@ def _random_catalog(npart=100, boxsize=100.0, seed=0):
 
 
 def test_mass_conservation_all_methods():
+    """Test mass assignment conserves mass for all methods."""
     pos, weights, boxsize = _random_catalog(npart=300, boxsize=100.0)
     nmesh = 16
     for method in ("NGP", "CIC", "TSC"):
@@ -58,8 +59,7 @@ def test_interpolate_grid_to_particles_identity():
 
 
 def test_pbc_wrapping_equivalence():
-    # verify that assigning a particle outside the box with pbc=True
-    # is equivalent to its wrapped position
+    """verify that assigning a particle outside the box with pbc=True is equivalent to its wrapped position """
     pos, weights, boxsize = _random_catalog(npart=200, boxsize=100.0)
     nmesh = 16
     # pick a particle and move it by +boxsize along x
