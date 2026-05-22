@@ -24,6 +24,8 @@ jobs:
           MPICC: mpicc
         run: |
           python -m pip install --upgrade pip setuptools wheel
+
+          pip install git+https://github.com/cosmodesi/pyrecon.git@main
           
           # QUESTO È IL COMANDO CHIAVE:
           # Installa zeldareco in modalità editabile e i test requirements
@@ -31,6 +33,7 @@ jobs:
           
           # Installa il resto (runtime già gestito da install_requires di setup.py)
           pip install -r requirements/runtime.txt
+          pip install -r requirements/test.txt
 
       - name: Run tests
         run: |
