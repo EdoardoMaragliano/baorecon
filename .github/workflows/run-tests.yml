@@ -28,7 +28,7 @@ jobs:
           # Installa il plugin necessario per il flag -n
           pip install pytest-xdist
 
-          pip install git+https://github.com/cosmodesi/pyrecon.git@main
+          pip install git+https://github.com/cosmodesi/pyrecon.git@mpi
           
           # QUESTO È IL COMANDO CHIAVE:
           # Installa zeldareco in modalità editabile e i test requirements
