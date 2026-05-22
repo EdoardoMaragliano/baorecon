@@ -3,7 +3,7 @@ from pathlib import Path
 from setuptools import setup, find_packages
 
 
-def read_requirements(path):
+'''def read_requirements(path):
     try:
         return [
             line.strip()
@@ -11,7 +11,22 @@ def read_requirements(path):
             if line.strip() and not line.strip().startswith("#") and not line.strip().startswith("-r")
         ]
     except FileNotFoundError:
+        return []'''
+
+def read_requirements(path):
+    req_file = Path(path)
+    if not req_file.exists():
         return []
+    
+    # Filtriamo solo le righe che sono valide dipendenze
+    lines = req_file.read_text(encoding="utf-8").splitlines()
+    requirements = []
+    for line in lines:
+        line = line.strip()
+        # Ignora commenti, righe vuote e inclusioni di altri file (che pip gestisce internamente)
+        if line and not line.startswith("#") and not line.startswith("-r"):
+            requirements.append(line)
+    return requirements
 
 
 # Carica il README in sicurezza
