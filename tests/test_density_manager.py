@@ -89,10 +89,11 @@ def test_density_manager_vs_pyrecon():
     dm = DensityManager(data, rand, nmesh=nmesh, boxsize=box, boxcentre=[box/2]*3, smoothing_radius=15.0, pbc=True, padding=0.0)
     delta_z = dm.compute_delta(threshold_randoms=rand_th, sm_mode="wrap")
 
-    py = MultiGridReconstruction(f=0.0, bias=BIAS, los=None, boxsize=box, boxcenter=[box/2]*3, nmesh=nmesh, wrap=True, resampler='cic', ran_min=rand_th)
+    py = MultiGridReconstruction(f=0.0, bias=BIAS, los=None, boxsize=box, boxcenter=[box/2]*3, 
+        nmesh=nmesh, wrap=True, resampler='cic', ran_min=rand_th)
     py.assign_data(data)
     py.assign_randoms(rand)
-    py.set_density_contrast(smoothing_radius=15.0, ran_min=rand_th)
+    py.set_density_contrast(smoothing_radius=15.0)
     delta_py = BIAS*np.asarray(py.mesh_delta)
 
     assert delta_z.shape == delta_py.shape
