@@ -29,7 +29,7 @@ def ngp_ma(pos: np.ndarray,
             nmesh: int, 
             weights: np.ndarray = None, 
             pbc: bool = True, 
-            dtype=np.float64, 
+            dtype=np.float32, 
             verbose: bool=False
            ) -> np.ndarray:
     """
@@ -103,7 +103,7 @@ def cic_ma_numba(pos: np.ndarray,
                  n_cell: int, 
                  weights: np.ndarray, 
                  pbc: bool = True, 
-                 dtype=np.float64
+                 dtype=np.float32
                 ) -> np.ndarray:
     """
     CIC (Cloud-In-Cell) interpolator for computing density on a grid.
@@ -176,7 +176,7 @@ def cic_ma_numba(pos: np.ndarray,
 ###############################
 
 @njit(parallel=True, nopython=True, fastmath=True)
-def cic_interpolation_safe(pos, boxsize, nmesh, weights, pbc=True, dtype=np.float64) -> np.ndarray:
+def cic_interpolation_safe(pos, boxsize, nmesh, weights, pbc=True, dtype=np.float32) -> np.ndarray:
     """
     Interpolazione CIC thread-safe con pesi e periodicità.
     
@@ -245,7 +245,7 @@ def cic_ma(pos: np.ndarray,
            nmesh: int, 
            weights: np.ndarray = None, 
            pbc: bool = True, 
-           dtype=np.float64, 
+           dtype=np.float32, 
            verbose: bool=False,
            parallel: bool = False,
            ) -> np.ndarray:
@@ -312,7 +312,7 @@ def tsc_ma_numba(pos: np.ndarray,
                  n_cell: int, 
                  weights: np.ndarray = None, 
                  pbc: bool = True, 
-                 dtype=np.float64, 
+                 dtype=np.float32, 
                 ) -> np.ndarray:
     """
     Perform Triangular Shaped Cloud weighting (TSC) to compute a density grid.
@@ -403,7 +403,7 @@ def clip(val, min_val, max_val):
         return val
 
 @njit(parallel=True, nopython=True, fastmath=True)
-def tsc_interpolation_safe(pos, boxsize, nmesh, weights, pbc=True, dtype=np.float64):
+def tsc_interpolation_safe(pos, boxsize, nmesh, weights, pbc=True, dtype=np.float32):
     """
     Thread-safe, bias-free TSC particle->grid assignment.
     Ensures exact mass conservation per particle and handles boundaries correctly.
@@ -495,7 +495,7 @@ def tsc_ma(pos: np.ndarray,
            nmesh: int, 
            weights: np.ndarray = None, 
            pbc: bool = True, 
-           dtype=np.float64, 
+           dtype=np.float32, 
            verbose: bool=False,
            parallel: bool = False,
           ) -> np.ndarray:
@@ -563,7 +563,7 @@ def mass_assignment(pos: np.ndarray,
                     weights: np.ndarray = None, 
                     method: str = 'CIC', 
                     pbc: bool = True, 
-                    dtype=np.float64, 
+                    dtype=np.float32, 
                     verbose: bool = False,
                     parallel: bool = False
                     )  -> np.ndarray:
@@ -842,7 +842,7 @@ def interpolate_grid_to_particles(pos: np.ndarray,
                                     boxsize: float,
                                     method: str = 'CIC',
                                     pbc: bool = True,
-                                    dtype=np.float64
+                                    dtype=np.float32
                                      ) -> np.ndarray:
         """
         Interpolate grid values to particle positions using specified mass assignment scheme.
@@ -908,7 +908,7 @@ def interpolate_grid_to_particles(pos: np.ndarray,
 #############################
 
 @njit(parallel=False, nopython=True, fastmath=True)
-def grid_to_particle_ngp(pos, grid, boxsize, pbc=True, dtype=np.float64):
+def grid_to_particle_ngp(pos, grid, boxsize, pbc=True, dtype=np.float32):
     """
     NGP interpolation: nearest grid point.
     
@@ -939,7 +939,7 @@ def grid_to_particle_ngp(pos, grid, boxsize, pbc=True, dtype=np.float64):
     return out
 
 @njit(parallel=False, nopython=True, fastmath=True)
-def grid_to_particle_cic(pos, grid, boxsize, pbc=True, dtype=np.float64):
+def grid_to_particle_cic(pos, grid, boxsize, pbc=True, dtype=np.float32):
     """
     CIC interpolation: trilinear interpolation.
     """
@@ -987,7 +987,7 @@ def tsc_weight(d):
         return 0.0'''
 
 @njit(parallel=False, nopython=True, fastmath=True)
-def grid_to_particle_tsc(pos, grid, boxsize, pbc=True, dtype=np.float64):
+def grid_to_particle_tsc(pos, grid, boxsize, pbc=True, dtype=np.float32):
     """
     TSC interpolation: cubic (3x3x3) interpolation
     """

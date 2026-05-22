@@ -267,7 +267,7 @@ def project_vector_field_jit(vector_field, los_versor, out=None, dtype=np.float3
     return out
 
 @njit(parallel=True, fastmath=True)
-def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float64):
+def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     """
     Trilinear CIC interpolation for vector fields.
     
@@ -346,7 +346,7 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float64):
 
 '''
 @njit(parallel=True, fastmath=True)
-def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float64):
+def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     """
     TSC (Triangular Shaped Cloud) interpolation for vector fields.
     
@@ -434,7 +434,7 @@ def tsc_weight(dx):
         return 0.0
 
 @njit(parallel=True, fastmath=True)
-def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float64):
+def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     N = pos.shape[0]
     nmesh = field.shape[0]
     out = np.zeros((N, 3), dtype=dtype)
@@ -482,7 +482,7 @@ def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float64):
 
     return out
 
-def interpolate_vector_field(pos:np.ndarray, field:np.ndarray, boxsize:float, MAS:str='CIC', pbc:bool=True, dtype=np.float64) -> np.ndarray:
+def interpolate_vector_field(pos:np.ndarray, field:np.ndarray, boxsize:float, MAS:str='CIC', pbc:bool=True, dtype=np.float32) -> np.ndarray:
     """
     Interpolate a vector field defined on the mesh at the given positions using specified mass assignment scheme.
     Wraps the appropriate jitted interpolation function based on the chosen MAS.
