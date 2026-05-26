@@ -580,7 +580,7 @@ def smoothed_field(field_on_mesh:np.ndarray, mesh, smoothing_radius:float, pbc:b
     ##if pbc:
     #logger.debug('Applying FFT-based Gaussian smoothing with PBC.')
     delta_k = sfft.rfftn(field_on_mesh)
-    S_k = _gaussian_kernel(mesh, smoothing_radius, workers=-1)
+    S_k = _gaussian_kernel(mesh, smoothing_radius)
     sm_delta_k = S_k * delta_k
     return sfft.irfftn(sm_delta_k, s=field_on_mesh.shape, workers=-1)
     '''else:
