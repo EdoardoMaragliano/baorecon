@@ -62,7 +62,6 @@ class FFTSolver(PoissonSolver):
 
             # Apply RSD correction if needed
             if self.RSDspace == 'RedshiftSpace':
-                # Nota: beta = f/b. Assicurati che self.beta sia definito
                 parallel_comp = self.mesh.get_parallel_component(self._displacement)
                 self._displacement -= (self.beta / (1.0 + self.beta)) * parallel_comp
 
