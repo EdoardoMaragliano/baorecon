@@ -37,7 +37,7 @@ class FFTSolver(PoissonSolver):
             self._compute_displacement_iterative_potential(n_iterations=3)
 
     def _compute_displacement_direct(self):
-            logger.debug('Using direct estimation of displacement field (FFT).')
+            logger.info('Using direct estimation of displacement field (FFT).')
 
             # define k^2 and mask for k=0
             k2 = np.sum(self.mesh.kmesh**2, axis=-1)
@@ -67,7 +67,7 @@ class FFTSolver(PoissonSolver):
 
 
     def _compute_displacement_iterative_potential(self, n_iterations=3):
-        logger.debug(f'Computing displacement iteratively (RSD), iterations={n_iterations}')
+        logger.info(f'Computing displacement iteratively (RSD), iterations={n_iterations}')
 
         # Precompute k^2 and mask for k=0
         k2 = np.sum(self.mesh.kmesh**2, axis=-1)
@@ -78,7 +78,7 @@ class FFTSolver(PoissonSolver):
         delta_k_it = np.fft.rfftn(sm_delta_on_mesh)
 
         for iteration in range(n_iterations):
-            logger.debug(f'Iteration {iteration+1}')
+            logger.info(f'Iteration {iteration+1}')
             
             # fourier space potential estimation
             phi_est_k = np.zeros_like(delta_k_it)
