@@ -64,7 +64,7 @@ class ReconstructionPipeline:
         coordinate_cfg = self.config.coordinate_system
         ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
         frame = coordinate_cfg.get("frame", "icrs")
-        distance_unit = coordinate_cfg.get("distance_unit", "Mpc")
+        distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
         self.data_pos_xyz, _ = radec_z_to_xyz(
             self.data_pos_radec[:, 0],
@@ -85,6 +85,49 @@ class ReconstructionPipeline:
             distance_unit=distance_unit,
         )
         return self.data_pos_xyz, self.random_pos_xyz
+
+    '''def convert_to_xyz(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Convert RA/DEC/redshift coordinates to Cartesian coordinates with memory efficiency."""
+        if self.data_pos_radec is None or self.random_pos_radec is None:
+            self.load_catalogs()
+
+        coordinate_cfg = self.config.coordinate_system
+        ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
+        distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
+
+        # --- OPTIMIZE MEMORY ---
+        d_ra = np.ascontiguousarray(self.data_pos_radec[:, 0])
+        d_dec = np.ascontiguousarray(self.data_pos_radec[:, 1])
+        d_z = np.ascontiguousarray(self.data_pos_radec[:, 2])
+
+        self.data_pos_xyz, _ = radec_z_to_xyz(
+            d_ra, d_dec, d_z,
+            cosmo=self.cosmology,
+            ra_dec_unit=ra_dec_unit,
+            distance_unit=distance_unit,
+        )
+        
+        # Liberiamo subito i riferimenti temporanei per la RAM
+        del d_ra, d_dec, d_z 
+
+        # --- OTTIMIZZAZIONE MEMORIA RANDOM (37 MILIONI DI PUNTI) ---
+        # Lo slicing transizionale [:, i] su 37 milioni di righe è lentissimo.
+        # Trasformando i dati in vettori 1D contigui separati in memoria in un colpo solo,
+        # np.interp e np.cos non dovranno fare salti di memoria giganti (cache misses).
+        r_ra = np.ascontiguousarray(self.random_pos_radec[:, 0])
+        r_dec = np.ascontiguousarray(self.random_pos_radec[:, 1])
+        r_z = np.ascontiguousarray(self.random_pos_radec[:, 2])
+
+        self.random_pos_xyz, _ = radec_z_to_xyz(
+            r_ra, r_dec, r_z,
+            cosmo=self.cosmology,
+            ra_dec_unit=ra_dec_unit,
+            distance_unit=distance_unit,
+        )
+        
+        del r_ra, r_dec, r_z
+
+        return self.data_pos_xyz, self.random_pos_xyz'''
 
     def build_reconstructor(self) -> BAOReconstructor:
         """Instantiate the BAO reconstructor using the configuration values."""
@@ -131,10 +174,11 @@ class ReconstructionPipeline:
         if self.data_rec_xyz is None or self.random_rec_xyz is None:
             self.reconstruct()
 
+        logger.info("Converting back to RA/DEC/redshift...")
         coordinate_cfg = self.config.coordinate_system
         ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
         frame = coordinate_cfg.get("frame", "icrs")
-        distance_unit = coordinate_cfg.get("distance_unit", "Mpc")
+        distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
         self.data_rec_radec, _, self.data_rec_z, _ = xyz_to_radec_z(
             self.data_rec_xyz,
@@ -152,6 +196,7 @@ class ReconstructionPipeline:
         )
         self.data_rec_radec = np.column_stack((self.data_rec_radec, self.data_rec_z))
         self.random_rec_radec = np.column_stack((self.random_rec_radec, self.random_rec_z))
+        logger.info("Conversion complete.") 
         return self.data_rec_radec, self.random_rec_radec, self.data_rec_z, self.random_rec_z
 
     def apply_mask(self, data_mask: Optional[np.ndarray] = None, random_mask: Optional[np.ndarray] = None) -> None:

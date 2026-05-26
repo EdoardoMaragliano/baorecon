@@ -5,6 +5,7 @@ from __future__ import annotations
 from typing import Optional, Tuple
 
 import numpy as np
+from astropy.io import fits
 from astropy.table import Table
 
 from zeldareco.io.config import CatalogConfig
@@ -48,6 +49,7 @@ class Catalog:
                 np.asarray(self.data_table[columns.redshift]),
             )
         )
+
         random_pos = np.column_stack(
             (
                 np.asarray(self.random_table[columns.ra]),
@@ -57,14 +59,14 @@ class Catalog:
         )
 
         if columns.weight_data is not None:
-            data_weights = np.asarray(self.data_table[columns.weight_data], dtype=np.float64)
+            data_weights = np.asarray(self.data_table[columns.weight_data], dtype=np.float32)
         else:
-            data_weights = np.ones(len(self.data_table), dtype=np.float64)
+            data_weights = np.ones(len(self.data_table), dtype=np.float32)
 
         if columns.weight_random is not None:
-            random_weights = np.asarray(self.random_table[columns.weight_random], dtype=np.float64)
+            random_weights = np.asarray(self.random_table[columns.weight_random], dtype=np.float32)
         else:
-            random_weights = np.ones(len(self.random_table), dtype=np.float64)
+            random_weights = np.ones(len(self.random_table), dtype=np.float32)
 
         data_ids = None
         if columns.id_data is not None:
@@ -75,6 +77,7 @@ class Catalog:
             random_ids = np.asarray(self.random_table[columns.id_random])
 
         return data_pos, data_weights, data_ids, random_pos, random_weights, random_ids
+
 
     def apply_mask(self, mask: np.ndarray, is_data: bool = True) -> None:
         """Apply a boolean mask while preserving the associated IDs."""

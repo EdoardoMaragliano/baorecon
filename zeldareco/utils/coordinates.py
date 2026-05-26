@@ -169,8 +169,7 @@ def xyz_to_radec_z(
     dist_out = dist_mpc * (cosmo.h if distance_unit == "Mpc/h" else 1.0)
 
     # Interpolazione redshift
-    z_interp = _get_distance_to_redshift_interpolator(cosmo, z_max=z_max)
-    redshift = z_interp(dist_mpc).astype(np.float32)
+    redshift = distance_to_redshift(dist_mpc, cosmo)
     
     return ra, dec, redshift, dist_out
 
@@ -187,3 +186,16 @@ def comoving_distance(redshift: Union[float, np.ndarray], cosmo: Optional[FlatLa
     z_grid, d_grid = _get_cosmology_grids(cosmo, z_max=float(np.max(z_arr)))
     dist_mpc = np.interp(z_arr, z_grid, d_grid)
     return dist_mpc 
+
+def distance_to_redshift(comoving_distance: Union[float, np.ndarray], cosmo: Optional[FlatLambdaCDM] = None) -> np.ndarray:
+    """Compute redshift for given comoving distance(s) using ultra-fast grid lookup."""
+    if cosmo is None:
+        cosmo = Planck18
+
+    d_arr = np.asarray(comoving_distance, dtype=np.float32)
+    if np.any(d_arr < 0):
+        raise ValueError("comoving_distance must be >= 0.")
+
+    z_grid, d_grid = _get_cosmology_grids(cosmo, z_max=float(np.max(d_arr)))
+    redshift = np.interp(d_arr, d_grid, z_grid)
+    return redshift

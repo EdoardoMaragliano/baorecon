@@ -50,7 +50,7 @@ reconstruction:
   bias: 1.7
   MAS: "CIC"
   threshold_randoms: 0.7
-  solver_type: "multigrid"
+  solver_type: "ifft"
 
 masking:
   apply_mask: false

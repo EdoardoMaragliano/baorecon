@@ -1,4 +1,5 @@
 import numpy as np
+from scipy import fft as sfft
 from zeldareco.displacement_solver.poisson_solver import PoissonSolver
 from zeldareco.mesh.mesh import Mesh
 from zeldareco.mesh.field_ops import divergence_FFT as divergence
@@ -44,7 +45,7 @@ class FFTSolver(PoissonSolver):
             mask = k2 > 0  # Esclude k=0
 
             # Fourier transform delta
-            delta_k = np.fft.rfftn(self.delta_on_mesh)
+            delta_k = sfft.rfftn(self.delta_on_mesh, workers=-1)
 
             # Initialize psi_k with the correct shape for vector field (N, N, N/2+1, 3)
             self._psi_k = np.zeros(delta_k.shape + (3,), dtype=np.complex128)
@@ -56,7 +57,7 @@ class FFTSolver(PoissonSolver):
                 self._psi_k[mask, i] = 1j * self.mesh.kmesh[mask, i] * delta_k[mask] * inv_k2_bias
 
             # Inverse FFT to get displacement in real space
-            self._displacement = np.fft.irfftn(self._psi_k, axes=(0, 1, 2))
+            self._displacement = sfft.irfftn(self._psi_k, axes=(0, 1, 2), workers=-1)
 
 
             # Apply RSD correction if needed
@@ -75,7 +76,7 @@ class FFTSolver(PoissonSolver):
 
         #
         sm_delta_on_mesh = np.copy(self.delta_on_mesh)
-        delta_k_it = np.fft.rfftn(sm_delta_on_mesh)
+        delta_k_it = sfft.rfftn(sm_delta_on_mesh, workers=-1)
 
         for iteration in range(n_iterations):
             logger.info(f'Iteration {iteration+1}')
@@ -90,7 +91,7 @@ class FFTSolver(PoissonSolver):
                 grad_phi_est_k[mask, i] = 1j * self.mesh.kmesh[mask, i] * phi_est_k[mask]
 
             # Inverse FFT to get gradient in real space
-            grad_phi_est_x = np.fft.irfftn(grad_phi_est_k, axes=(0, 1, 2))
+            grad_phi_est_x = sfft.irfftn(grad_phi_est_k, axes=(0, 1, 2), workers=-1)
 
             # RSD Correction
             # Note: grad_phi_est_x is the estimated displacement vector (Psi)
@@ -104,7 +105,7 @@ class FFTSolver(PoissonSolver):
 
             # update delta in real space and transform back to Fourier space for next iteration
             delta_real_it = sm_delta_on_mesh + correction
-            delta_k_it = np.fft.rfftn(delta_real_it)
+            delta_k_it = sfft.rfftn(delta_real_it, workers=-1)
 
         # --- FINE LOOP ---
 
@@ -115,7 +116,7 @@ class FFTSolver(PoissonSolver):
         for i in range(3):
             self._psi_k[mask, i] = 1j * self.mesh.kmesh[mask, i] * delta_k_it[mask] * inv_k2_bias
 
-        self._displacement = np.fft.irfftn(self._psi_k, axes=(0, 1, 2))
+        self._displacement = sfft.irfftn(self._psi_k, axes=(0, 1, 2), workers=-1)
 
 
 
@@ -135,4 +136,4 @@ class FFTSolver(PoissonSolver):
             phi_k = np.zeros(self.mesh.kmesh.shape[:-1], dtype=np.complex128)
             for i in range(3):
                 phi_k[mask] += 1j * self.mesh.kmesh[mask, i] * self._psi_k[mask, i] * inv_k2[mask]
-            self._potential = np.fft.irfftn(phi_k, axes=(0, 1, 2))
+            self._potential = sfft.irfftn(phi_k, axes=(0, 1, 2), workers=-1)

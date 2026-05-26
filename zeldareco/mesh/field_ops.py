@@ -1,4 +1,5 @@
 import numpy as np
+import scipy.fft as sfft
 import time
 from numba import njit, prange
 from scipy.interpolate import interpn
@@ -198,10 +199,10 @@ def divergence_FFT(vector_field:np.ndarray, kmesh:np.ndarray) -> np.ndarray:
     
     kx, ky, kz = kmesh[..., 0], kmesh[..., 1], kmesh[..., 2]
     
-    v_k = np.fft.rfftn(vector_field, axes=(0,1,2))
+    v_k = sfft.rfftn(vector_field, axes=(0,1,2), workers=-1)
     div_k = v_k[..., 0] * (1j * kx) +  v_k[..., 1] * (1j * ky) + v_k[..., 2] * (1j * kz)
 
-    divergence_from_fourier = np.fft.irfftn(div_k, axes=(0,1,2))
+    divergence_from_fourier = sfft.irfftn(div_k, axes=(0,1,2), workers=-1)
     return divergence_from_fourier
 
     
@@ -578,10 +579,10 @@ def smoothed_field(field_on_mesh:np.ndarray, mesh, smoothing_radius:float, pbc:b
 
     ##if pbc:
     #logger.debug('Applying FFT-based Gaussian smoothing with PBC.')
-    delta_k = np.fft.rfftn(field_on_mesh)
-    S_k = _gaussian_kernel(mesh, smoothing_radius)
+    delta_k = sfft.rfftn(field_on_mesh)
+    S_k = _gaussian_kernel(mesh, smoothing_radius, workers=-1)
     sm_delta_k = S_k * delta_k
-    return np.fft.irfftn(sm_delta_k, s=field_on_mesh.shape)
+    return sfft.irfftn(sm_delta_k, s=field_on_mesh.shape, workers=-1)
     '''else:
         logger.debug('Applying real-space Gaussian smoothing without PBC. Mode: {}'.format(mode))
         from scipy.ndimage import gaussian_filter
