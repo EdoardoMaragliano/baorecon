@@ -51,7 +51,7 @@ def test_mass_conservation_all_methods():
 
 def test_interpolate_grid_to_particles_identity():
     pos, _, boxsize = _random_catalog(npart=50, boxsize=50.0)
-    grid = np.full((8, 8, 8), 2.5, dtype=np.float64)
+    grid = np.full((8, 8, 8), 2.5, dtype=np.float32)
     for method in ("NGP", "CIC", "TSC"):
         vals = interpolate_grid_to_particles(pos, grid, boxsize, method=method)
         assert vals.shape[0] == pos.shape[0]
