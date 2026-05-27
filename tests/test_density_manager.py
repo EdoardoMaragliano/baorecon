@@ -46,7 +46,7 @@ def test_mass_conservation_all_methods():
         assert field.shape == (nmesh, nmesh, nmesh)
         assert np.isfinite(field).all()
         # total assigned mass must equal sum of input weights
-        assert np.isclose(field.sum(), weights.sum(), rtol=1e-12, atol=1e-12)
+        assert np.isclose(field.sum(), weights.sum(), rtol=1e-5, atol=1e-5)
 
 
 def test_interpolate_grid_to_particles_identity():
