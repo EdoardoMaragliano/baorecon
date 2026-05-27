@@ -171,5 +171,5 @@ cython_debug/
 .DS_Store
 
 # output of notebooks tests
-tests/tests_multigrid/test_outputs/
-tests/tests_ifft/test_outputs/
+tests/tests_multigrid/outputs/
+tests/tests_ifft/outputs/
