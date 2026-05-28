@@ -5,9 +5,11 @@ from __future__ import annotations
 from dataclasses import asdict
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
+import pickle
 
 import numpy as np
 from astropy.table import Table
+from astropy.io import fits
 
 from zeldareco.BAOreconstruction.bao_reconstructor import BAOReconstructor
 from zeldareco.io.catalog_io import Catalog
@@ -86,48 +88,6 @@ class ReconstructionPipeline:
         )
         return self.data_pos_xyz, self.random_pos_xyz
 
-    '''def convert_to_xyz(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Convert RA/DEC/redshift coordinates to Cartesian coordinates with memory efficiency."""
-        if self.data_pos_radec is None or self.random_pos_radec is None:
-            self.load_catalogs()
-
-        coordinate_cfg = self.config.coordinate_system
-        ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
-        distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
-
-        # --- OPTIMIZE MEMORY ---
-        d_ra = np.ascontiguousarray(self.data_pos_radec[:, 0])
-        d_dec = np.ascontiguousarray(self.data_pos_radec[:, 1])
-        d_z = np.ascontiguousarray(self.data_pos_radec[:, 2])
-
-        self.data_pos_xyz, _ = radec_z_to_xyz(
-            d_ra, d_dec, d_z,
-            cosmo=self.cosmology,
-            ra_dec_unit=ra_dec_unit,
-            distance_unit=distance_unit,
-        )
-        
-        # Liberiamo subito i riferimenti temporanei per la RAM
-        del d_ra, d_dec, d_z 
-
-        # --- OTTIMIZZAZIONE MEMORIA RANDOM (37 MILIONI DI PUNTI) ---
-        # Lo slicing transizionale [:, i] su 37 milioni di righe è lentissimo.
-        # Trasformando i dati in vettori 1D contigui separati in memoria in un colpo solo,
-        # np.interp e np.cos non dovranno fare salti di memoria giganti (cache misses).
-        r_ra = np.ascontiguousarray(self.random_pos_radec[:, 0])
-        r_dec = np.ascontiguousarray(self.random_pos_radec[:, 1])
-        r_z = np.ascontiguousarray(self.random_pos_radec[:, 2])
-
-        self.random_pos_xyz, _ = radec_z_to_xyz(
-            r_ra, r_dec, r_z,
-            cosmo=self.cosmology,
-            ra_dec_unit=ra_dec_unit,
-            distance_unit=distance_unit,
-        )
-        
-        del r_ra, r_dec, r_z
-
-        return self.data_pos_xyz, self.random_pos_xyz'''
 
     def build_reconstructor(self) -> BAOReconstructor:
         """Instantiate the BAO reconstructor using the configuration values."""
@@ -180,23 +140,25 @@ class ReconstructionPipeline:
         frame = coordinate_cfg.get("frame", "icrs")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
-        self.data_rec_radec, _, self.data_rec_z, _ = xyz_to_radec_z(
+        data_ra, data_dec, self.data_rec_z, _ = xyz_to_radec_z(
             self.data_rec_xyz,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
             frame=frame,
             distance_unit=distance_unit,
         )
-        self.random_rec_radec, _, self.random_rec_z, _ = xyz_to_radec_z(
+        self.data_rec_radec = np.column_stack((data_ra, data_dec))
+
+        random_ra, random_dec, self.random_rec_z, _ = xyz_to_radec_z(
             self.random_rec_xyz,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
             frame=frame,
             distance_unit=distance_unit,
         )
-        self.data_rec_radec = np.column_stack((self.data_rec_radec, self.data_rec_z))
-        self.random_rec_radec = np.column_stack((self.random_rec_radec, self.random_rec_z))
-        logger.info("Conversion complete.") 
+        self.random_rec_radec = np.column_stack((random_ra, random_dec))
+
+        logger.info("Conversion complete.")
         return self.data_rec_radec, self.random_rec_radec, self.data_rec_z, self.random_rec_z
 
     def apply_mask(self, data_mask: Optional[np.ndarray] = None, random_mask: Optional[np.ndarray] = None) -> None:
@@ -206,18 +168,19 @@ class ReconstructionPipeline:
         if random_mask is not None:
             self.catalog.apply_mask(np.asarray(random_mask, dtype=bool), is_data=False)
 
-    def save_outputs(self) -> Tuple[str, str]:
-        """Save reconstructed catalogs into the configured output folder."""
+    def save_outputs(self) -> Dict[str, str]:
+        """Save configured outputs into the output folder."""
         if self.data_rec_xyz is None or self.random_rec_xyz is None:
             self.reconstruct()
         if self.data_rec_radec is None or self.random_rec_radec is None:
             self.convert_back()
 
         output_cfg = self.config.output
+        save_options = set(output_cfg.get("save", ["catalogs"]))
         output_folder = Path(output_cfg.get("folder", "."))
         output_folder.mkdir(parents=True, exist_ok=True)
 
-        pattern = output_cfg.get("naming_pattern", "rec_{name}_{solver}_{z0:.2f}")
+        pattern = output_cfg.get("naming_pattern", "rec_{name}_{solver}")
         base_name = NamingTokenizer.format_name(
             pattern,
             name=self.config.catalog_name or "catalog",
@@ -229,32 +192,81 @@ class ReconstructionPipeline:
             Om0=self.config.cosmology.get("Om0", 0.3175),
         )
 
-        data_table = self.catalog.build_output_table(
-            is_data=True,
-            reconstructed_xyz=self.data_rec_xyz,
-            reconstructed_radec=self.data_rec_radec,
-            reconstructed_redshift=self.data_rec_z,
-        )
-        random_table = self.catalog.build_output_table(
-            is_data=False,
-            reconstructed_xyz=self.random_rec_xyz,
-            reconstructed_radec=self.random_rec_radec,
-            reconstructed_redshift=self.random_rec_z,
-        )
+        saved_paths: Dict[str, str] = {}
 
-        data_path = str(output_folder / (base_name + "_data.fits"))
-        random_path = str(output_folder / (base_name + "_random.fits"))
-        data_table.write(data_path, overwrite=True)
-        random_table.write(random_path, overwrite=True)
+        def _save_fits_image(data: np.ndarray, suffix: str) -> str:
+            path = str(output_folder / (base_name + suffix))
+            fits.writeto(path, data, overwrite=True, output_verify="silentfix")
+            logger.info("Saved FITS image to {0}".format(path))
+            return path
+
+        if "catalogs" in save_options or "tracer_displacements" in save_options:
+            data_displacements = None
+            random_displacements = None
+            if "tracer_displacements" in save_options:
+                # The displacement vector 's' is defined as s = x_initial - x_reconstructed
+                assert self.data_pos_xyz is not None and self.data_rec_xyz is not None
+                assert self.random_pos_xyz is not None and self.random_rec_xyz is not None
+                logger.info("Calculating tracer displacements from initial and reconstructed positions.")
+                data_displacements = self.data_pos_xyz - self.data_rec_xyz
+                random_displacements = self.random_pos_xyz - self.random_rec_xyz
+
+            data_table = self.catalog.build_output_table(
+                is_data=True,
+                reconstructed_radec=self.data_rec_radec,
+                reconstructed_redshift=self.data_rec_z,
+                displacements=data_displacements,
+            )
+            random_table = self.catalog.build_output_table(
+                is_data=False,
+                reconstructed_radec=self.random_rec_radec,
+                reconstructed_redshift=self.random_rec_z,
+                displacements=random_displacements,
+            )
+
+            if "catalogs" in save_options:
+                data_path = str(output_folder / (base_name + "_data.fits"))
+                random_path = str(output_folder / (base_name + "_random.fits"))
+                data_table.write(data_path, overwrite=True)
+                random_table.write(random_path, overwrite=True)
+                saved_paths["data_catalog"] = data_path
+                saved_paths["random_catalog"] = random_path
+                logger.info("Saved catalogs to {0} and {1}".format(data_path, random_path))
+
+        if "grid_potential" in save_options:
+            assert self.reconstructor is not None and self.reconstructor.solver is not None
+            potential = self.reconstructor.solver.potential
+            if potential is not None:
+                path = _save_fits_image(potential, "_potential.fits")
+                saved_paths["grid_potential"] = path
+            else:
+                logger.warning("Potential not computed or available in solver. Skipping save.")
+
+        if "grid_displacement" in save_options:
+            assert self.reconstructor is not None and self.reconstructor.solver is not None
+            displacement = self.reconstructor.solver.displacement
+            if displacement is not None:
+                path = _save_fits_image(displacement, "_displacement.fits")
+                saved_paths["grid_displacement"] = path
+            else:
+                logger.warning("Displacement not computed or available in solver. Skipping save.")
+
+        if "reconstructor_object" in save_options:
+            path = str(output_folder / (base_name + "_reconstructor.pkl"))
+            with open(path, "wb") as f:
+                pickle.dump(self.reconstructor, f)
+            saved_paths["reconstructor_object"] = path
+            logger.info("Saved reconstructor object to {0}".format(path))
 
         if output_cfg.get("save_metadata", True):
             metadata_path = output_folder / (base_name + "_metadata.txt")
             metadata_path.write_text(str(asdict(self.config)), encoding="utf-8")
+            saved_paths["metadata"] = str(metadata_path)
 
-        logger.info("Saved outputs to {0} and {1}".format(data_path, random_path))
-        return data_path, random_path
+        logger.info("Saved outputs: {0}".format(list(saved_paths.keys())))
+        return saved_paths
 
-    def run(self) -> Tuple[str, str]:
+    def run(self) -> Dict[str, str]:
         """Run the full reconstruction pipeline end-to-end."""
         self.load_catalogs()
         self.convert_to_xyz()

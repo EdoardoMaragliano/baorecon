@@ -100,7 +100,7 @@ class Catalog:
 
         logger.info("Applied mask to {0} catalog: {1} -> {2}".format("data" if is_data else "random", len(table), len(filtered)))
 
-    def build_output_table(
+    def build_output_table_verbose(
         self,
         is_data: bool,
         reconstructed_xyz: np.ndarray,
@@ -127,5 +127,42 @@ class Catalog:
 
         if reconstructed_redshift is not None:
             output["{0}_ZCOSMO".format(xyz_prefix)] = np.asarray(reconstructed_redshift)
+
+        return output
+
+    def build_output_table(
+        self,
+        is_data: bool,
+        reconstructed_radec: np.ndarray,
+        reconstructed_redshift: Optional[np.ndarray] = None,
+        displacements: Optional[np.ndarray] = None,
+    ) -> Table:
+        """Return a table where original coordinates are replaced by reconstructed ones."""
+        self._ensure_loaded()
+        table = self.data_table if is_data else self.random_table
+        if table is None:
+            raise RuntimeError("Catalog not loaded.")
+
+        output = table.copy()
+        
+        # Fetch the original column names from your config
+        col_ra = self.config.columns.ra
+        col_dec = self.config.columns.dec
+        col_z = self.config.columns.redshift
+
+        # Overwrite the original coordinates with the new ones
+        output[col_ra] = np.asarray(reconstructed_radec)[:, 0]
+        output[col_dec] = np.asarray(reconstructed_radec)[:, 1]
+        if reconstructed_redshift is not None:
+            output[col_z] = np.asarray(reconstructed_redshift)
+
+        if displacements is not None:
+            if displacements.shape[0] != len(output):
+                raise ValueError("Displacements array length must match table length.")
+            if displacements.shape[1] != 3:
+                raise ValueError("Displacements array must have shape (N, 3).")
+            output["S_X"] = displacements[:, 0]
+            output["S_Y"] = displacements[:, 1]
+            output["S_Z"] = displacements[:, 2]
 
         return output

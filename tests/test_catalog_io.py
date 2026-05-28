@@ -102,20 +102,40 @@ def test_catalog_apply_mask(mock_catalogs_setup):
 
 
 def test_catalog_build_output_table(mock_catalogs_setup):
-    """Testa la corretta generazione della tabella di output con i campi REC_X, Y, Z."""
+    """Testa la sovrascrittura delle coordinate RA/DEC/Z con quelle ricostruite."""
     config, _, _ = mock_catalogs_setup
     catalog = Catalog(config)
     catalog.load()
     
-    # Prepariamo coordinate coordinate di ricostruzione fittizie (XYZ)
+    # Prepariamo coordinate ricostruite fittizie (RA/DEC come array 2D)
     size_d = len(catalog.data_table)
-    mock_rec_xyz = np.random.uniform(-100, 100, size=(size_d, 3))
+    mock_rec_radec = np.random.uniform(0, 360, size=(size_d, 2))
+    mock_rec_radec[:, 1] = np.clip(mock_rec_radec[:, 1], -90, 90)  # DEC in range
+    mock_rec_z = np.random.uniform(0.1, 0.8, size=size_d)
+    
+    # Ricorda i valori originali
+    original_ra = catalog.data_table["RA"][0]
+    original_dec = catalog.data_table["DEC"][0]
+    original_z = catalog.data_table["Z"][0]
     
     # Generiamo la tabella di output
-    output_table = catalog.build_output_table(is_data=True, reconstructed_xyz=mock_rec_xyz, xyz_prefix="REC")
+    output_table = catalog.build_output_table(
+        is_data=True,
+        reconstructed_radec=mock_rec_radec,
+        reconstructed_redshift=mock_rec_z
+    )
     
-    # Verifichiamo che le nuove colonne esistano e contengano i dati corretti
-    assert "REC_X" in output_table.colnames
-    assert "REC_Y" in output_table.colnames
-    assert "REC_Z" in output_table.colnames
-    np.testing.assert_allclose(output_table["REC_X"], mock_rec_xyz[:, 0])
+    # Verifichiamo che le colonne originali siano state sovrascritte
+    assert "RA" in output_table.colnames
+    assert "DEC" in output_table.colnames
+    assert "Z" in output_table.colnames
+    
+    # Verifichiamo che i valori siano cambiarti (nuovo != originale)
+    assert not np.isclose(output_table["RA"][0], original_ra)
+    assert not np.isclose(output_table["DEC"][0], original_dec)
+    assert not np.isclose(output_table["Z"][0], original_z)
+    
+    # Verifichiamo che i nuovi valori corrispondano a quelli passati
+    np.testing.assert_allclose(output_table["RA"], mock_rec_radec[:, 0])
+    np.testing.assert_allclose(output_table["DEC"], mock_rec_radec[:, 1])
+    np.testing.assert_allclose(output_table["Z"], mock_rec_z)

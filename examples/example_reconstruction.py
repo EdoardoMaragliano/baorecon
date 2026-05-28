@@ -11,7 +11,7 @@ The example shows:
 4. Analyzing the results
 """
 import sys
-sys.path.insert(0,'/home/emaragliano/Work/Projects/Dottorato/ZeldovichReconstruction/')
+sys.path.insert(0,'/home/emaragliano/Work/Projects/Dottorato/baorecon/')
 
 import numpy as np
 import matplotlib.pyplot as plt

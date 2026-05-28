@@ -15,7 +15,25 @@ It handles:
 5. running `BAOReconstructor`
 6. preserving IDs through optional masking/filtering steps
 7. converting reconstructed coordinates back to RA/DEC/redshift
-8. saving outputs with tokenized filenames
+8. saving a flexible set of outputs (catalogs, fields, etc.) with tokenized filenames
+
+### Output Control
+
+The `output` section of the YAML configuration file allows fine-grained control over what gets saved. By default, only the reconstructed catalogs are written to disk. You can specify other artifacts using the `save` key:
+
+```yaml
+output:
+  folder: "./output/my_run"
+  # ...
+  save:
+    - catalogs              # (Default) Reconstructed FITS catalogs.
+    - tracer_displacements  # Adds S_X, S_Y, S_Z columns to the FITS catalogs.
+    - grid_potential        # Scalar potential (phi) on the grid (FITS image).
+    - grid_displacement     # Displacement field (psi) on the grid (FITS image).
+    - reconstructor_object  # The full BAOReconstructor object (pickle file for debugging).
+```
+
+If the `save` key is omitted, the pipeline defaults to `['catalogs']`.
 
 ## Main entry point
 
@@ -30,7 +48,7 @@ Typical execution flow:
 1. load the YAML config
 2. instantiate `ReconstructionPipeline`
 3. call `run()`
-4. collect the reconstructed FITS outputs in the configured folder
+4. collect the specified outputs in the configured folder
 
 ## Notes
 

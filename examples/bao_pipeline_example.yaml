@@ -76,5 +76,13 @@ output:
   folder: "/path/to/output_folder"
   naming_pattern: "rec_{name}_{solver}_n{nmesh}_z{z0:.2f}"
   save_metadata: true
+  # Control which artifacts to save. If omitted, defaults to ['catalogs'].
+  # Multiple options can be active at the same time by uncommenting them.
+  save:
+    - catalogs              # (Default) Reconstructed FITS catalogs.
+    # - tracer_displacements  # Adds S_X, S_Y, S_Z columns to the FITS catalogs.
+    # - grid_potential        # Scalar potential (phi) on the grid (FITS image).
+    # - grid_displacement     # Displacement field (psi) on the grid (FITS image).
+    # - reconstructor_object  # The full BAOReconstructor object (pickle file for debugging).
 
 catalog_name: "sample_survey"
