@@ -51,7 +51,7 @@ setup(
     description="A simple package to perform Zeldovich reconstruction of density and velocity fields.",
     long_description=long_description,
     long_description_content_type="text/markdown",
-    url="https://github.com/EdoardoMaragliano/ZeldovichReconstruction",
+    url="https://github.com/EdoardoMaragliano/baorecon",
     packages=find_packages(),
     classifiers=[
         "Programming Language :: Python :: 3",
