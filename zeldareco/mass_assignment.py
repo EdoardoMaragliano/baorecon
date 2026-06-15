@@ -67,7 +67,7 @@ def ngp_ma(pos: np.ndarray,
         raise ValueError("pos and weights must have the same number of particles")
     if pos.shape[1] != 3:
         raise ValueError("pos must have shape (N, 3)")
-    if pos.any() < 0 or pos.any() > boxsize:
+    if (pos<0).any() or (pos>boxsize).any():
         raise ValueError("pos must be in the range [0, boxsize]")
     
     # Initialize the density field to zero
