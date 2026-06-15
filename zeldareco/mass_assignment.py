@@ -338,7 +338,7 @@ def tsc_ma(pos: np.ndarray,
     """
     if verbose:
         start_time = time.time()
-        print("Starting TSC mass assignment...")
+        logger.info("Starting TSC mass assignment...")
 
      # Assign default weights if not provided
     if weights is None:
