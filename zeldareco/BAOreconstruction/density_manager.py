@@ -84,19 +84,16 @@ class DensityManager:
         """
         #format padding
         self.padding = format_padding(self.padding, self.pbc)
-
-        # infer or validate boxsize
-        combined = np.concatenate((self._raw_data_pos, self._raw_random_pos), axis=0)
         
         if self.boxsize is None:
-            self.boxsize = set_boxsize_from_positions(combined, padding=self.padding)
+            self.boxsize = set_boxsize_from_positions(self._raw_random_pos, padding=self.padding)
             logger.info(f"Box size not provided. Set to {self.boxsize} based on positions with padding {self.padding}.")
 
-        self.boxsize = format_boxsize(self.boxsize, positions=combined, pbc=self.pbc)
+        self.boxsize = format_boxsize(self.boxsize, positions=self._raw_random_pos, pbc=self.pbc)
 
         # infer or validate boxcentre
         if self.boxcentre is None:
-            self.boxcentre = set_boxcentre_from_positions(combined, dtype=self.dtype)
+            self.boxcentre = set_boxcentre_from_positions(self._raw_random_pos, dtype=self.dtype)
             logger.info(f"Box centre not provided. Set to {self.boxcentre} based on positions.")
         
         self.boxcentre = format_boxcentre(self.boxcentre, dtype=self.dtype)

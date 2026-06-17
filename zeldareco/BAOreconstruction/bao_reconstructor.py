@@ -113,9 +113,6 @@ class BAOReconstructor:
         self.data_pos = np.asarray(data_pos)
         self.random_pos = np.asarray(random_pos)
 
-        logger.info('mean data pos: %s', self.data_pos.mean(axis=0))
-        logger.info('mean random pos: %s', self.random_pos.mean(axis=0))
-
         # Delay formatting/validation to DensityManager: pass raw inputs
         self._density_manager = DensityManager(
             data_pos=self.data_pos,
