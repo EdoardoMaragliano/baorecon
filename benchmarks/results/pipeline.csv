@@ -1,0 +1,11 @@
+# baorecon benchmark results
+# generated: 2026-06-18 15:17:12
+# python: 3.10.19
+# numpy: 1.26.4
+# cpu: AMD EPYC 7413 24-Core Processor
+# cupy: 13.6.0
+# gpu: none
+# pyrecon: 1.0.0
+backend,n_particles,nmesh,step,time_mean,time_std,memory_peak_mb,memory_total_mb
+baorecon_cpu,5000000,512,total,41.11823483929038,0.0,26198.51171875,27161.44921875
+pyrecon,5000000,512,total,80.31840259581804,0.0,2649.6015625,3628.8515625

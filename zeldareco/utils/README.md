@@ -11,6 +11,7 @@ This package groups small helper modules shared across the reconstruction pipeli
 ## Main modules
 
 - `formatters.py`: normalization helpers for box size, positions, weights, MAS, and reconstruction flags
+- `coordinates.py`: cosmology setup and RA/DEC/redshift <-> Cartesian conversions
 - `loggers.py`: logger configuration shared across modules
 - `utils.py`: general-purpose utility functions
 - `mock_generator.py`: helpers for synthetic catalog and field generation

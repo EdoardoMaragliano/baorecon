@@ -74,7 +74,8 @@ def test_project_vector_field_tilted(axis_idx, expected_mag):
                 f"Numpy: Orthogonal axis {i} should be 0.0"
 
     # --- Test Numba JIT implementation ---
-    proj_jit = project_vector_field_jit(field, los_versor)
+    out = np.empty_like(field)
+    proj_jit = project_vector_field_jit(field, los_versor, out)
     
     assert np.allclose(proj_jit[..., axis_idx], expected_mag), \
         f"JIT: Expected magnitude {expected_mag} on axis {axis_idx}"

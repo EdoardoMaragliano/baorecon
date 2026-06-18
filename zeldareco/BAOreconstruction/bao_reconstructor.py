@@ -48,7 +48,7 @@ class BAOReconstructor:
     R_sm : float, optional
         Smoothing radius in Mpc/h. Default is 15.
     pbc : bool, optional
-        Use periodic boundary conditions. Default is True.
+        Use periodic boundary conditions. Default is False.
     rectype : str, optional
         Reconstruction type ('rec-sym' or 'rec-iso'). Default is 'rec-sym'.
     f : float, optional
@@ -86,7 +86,7 @@ class BAOReconstructor:
         data_weights: Optional[np.ndarray] = None,
         random_weights: Optional[np.ndarray] = None,
         data_ids: Optional[np.ndarray] = None,
-        RSDspace: str = "RealSpace",
+        RSDspace: str = "RedshiftSpace",
         nmesh: int = 256,
         boxsize: Optional[float] = None,
         boxcentre: Optional[np.ndarray] = None,

@@ -31,7 +31,7 @@ At a high level, the reconstruction works like this:
 
 ```python
 import numpy as np
-from zeldareco.BAOreconstruction.bao_reconstructor import BAOReconstructor
+from zeldareco import BAOReconstructor
 
 data_pos = np.random.rand(10000, 3) * 1000.0
 random_pos = np.random.rand(10000, 3) * 1000.0
@@ -97,6 +97,8 @@ The pipeline covers:
 See [zeldareco/pipeline/README.md](zeldareco/pipeline/README.md) and [examples/bao_pipeline_example.yaml](examples/bao_pipeline_example.yaml) for the full workflow.
 
 ## Installation
+
+Requires Python >= 3.10.
 
 You can install dependencies by scope.
 

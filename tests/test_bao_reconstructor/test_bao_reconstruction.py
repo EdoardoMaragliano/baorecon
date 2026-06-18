@@ -18,8 +18,11 @@ def test_bao_reconstructor_infers_box_when_missing():
     """Test boxsize and boxcenter are properly set when not provided"""
     from zeldareco.BAOreconstruction.bao_reconstructor import BAOReconstructor
 
-    data = np.random.uniform(0, 100, size=(100, 3))
+    # Randoms define the survey footprint; data must lie within it
+    # (as in real surveys, where randoms cover the data footprint).
+    np.random.seed(42)
     rand = np.random.uniform(0, 100, size=(200, 3))
+    data = np.random.uniform(20, 80, size=(100, 3))
 
     recon = BAOReconstructor(data, rand, nmesh=8, boxsize=None, boxcentre=None, padding=0.5)
 

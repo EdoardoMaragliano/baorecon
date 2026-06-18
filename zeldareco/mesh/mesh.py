@@ -135,7 +135,9 @@ class Mesh:
         logger.info(f'Line-of-sight: {self.los}')
 
     def get_parallel_component(self, vector_field: np.ndarray, out=None, dtype=np.float32) -> np.ndarray:
-        if self.los_versor is None:
+        if self._los_versor is None:
             self._set_los_versor()
-        return project_vector_field_jit(vector_field, self.los_versor, out=out, dtype=dtype)
+        if out is None:
+            out = np.empty_like(vector_field, dtype=dtype)
+        return project_vector_field_jit(vector_field, self.los_versor, out)
     

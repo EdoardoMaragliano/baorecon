@@ -126,9 +126,9 @@ def divergence_FFT(vector_field:np.ndarray, kmesh:np.ndarray) -> np.ndarray:
 from numba import njit, prange
 
 @njit(parallel=True, fastmath=True)
-def project_vector_field_jit(vector_field, los_versor, out=None, dtype=np.float32):
+def project_vector_field_jit(vector_field, los_versor, out):
     """
-    Project the vector field along the line-of-sight (LOS) in-place or into an output array.
+    Project the vector field along the line-of-sight (LOS) into a preallocated array.
 
     Parameters
     ----------
@@ -136,19 +136,15 @@ def project_vector_field_jit(vector_field, los_versor, out=None, dtype=np.float3
         Input vector field to project.
     los_versor : ndarray, shape (Nx, Ny, Nz, 3)
         Unit vectors defining the LOS direction at each mesh point.
-    out : ndarray, optional
-        Array to write the projected field into. If None, a new array is allocated.
+    out : ndarray, shape (Nx, Ny, Nz, 3)
+        Preallocated array to write the projected field into.
 
     Returns
     -------
     out : ndarray
         The projected vector field.
     """
-    if out is None:
-        out = np.empty_like(vector_field, dtype=dtype)
-    else:
-        out = out.astype(dtype)
-    
+
     nx, ny, nz, _ = vector_field.shape
     for i in prange(nx):
         for j in range(ny):

@@ -129,12 +129,12 @@ def generate_lognormal_map(pk_func, side, spacing):
     # Compute G(x), the gaussian field in real space
     G_x = np.fft.irfftn(G_k, norm='backward')/spacing**3
 
-    print('mean of G_x is = ', np.mean(G_x))
+    logger.debug("mean of G_x is = %s", np.mean(G_x))
     # get delta from G_x using lognormal transform
 
     # compute variance of G_x: E[e^G_x] = e^(mu+var(G_x)/2)
     var_G = np.var(G_x)
-    print('variance of G_x is = ', var_G)
+    logger.debug("variance of G_x is = %s", var_G)
     # subtract var(G_x)/2 to get E[G_x]=e^mu
     delta_x = np.exp(G_x-var_G/2)-1
 
@@ -209,5 +209,5 @@ def poisson_sample_from_map(delta_x, side, spacing, N_objects, seed=666):
                 if Nobj_x_sample[i,j,k] > 0 :
                     points.extend(np.random.uniform(size=(Nobj_x_sample[i,j,k], 3), low=[x_min,y_min,z_min], high=[x_max,y_max, z_max]))
 
-    print('total number of objects = ', len(points), 'out of ', N_objects)
+    logger.info("total number of objects = %d out of %d", len(points), N_objects)
     return np.array(points)

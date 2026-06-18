@@ -76,13 +76,13 @@ class _RawMultigrid:
         fine = self.levels[0]
         fine.f[:] = input_density.ravel()
         fine.v.fill(0.0)
-        print(f"Starting V-Cycles (N={n_cycles}, Smooth={n_smooth}, Damp={damping})...")
+        logger.info(f"Starting V-Cycles (N={n_cycles}, Smooth={n_smooth}, Damp={damping})...")
         for i in range(n_cycles):
             self._v_cycle_recursive(0, beta, los, n_smooth, damping)
             if i % 5 == 0:
                 residual_jit(fine.v, fine.f, fine.temp, fine.dims, fine.local_x, fine.offset_x,
                              self.boxsize, self.boxcenter, beta, los, self.use_plane_parallel)
-                print(f"  Cycle {i}: Res {np.std(fine.temp):.4e}")
+                logger.info(f"  Cycle {i}: Res {np.std(fine.temp):.4e}")
         return fine.v.reshape((fine.N, fine.N, fine.N))
 
     def _v_cycle_recursive(self, lvl_idx: int, beta: float, los: np.ndarray, n_smooth: int, damping: float):

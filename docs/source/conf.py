@@ -12,7 +12,7 @@ sys.path.insert(0, os.path.abspath('../..'))
 
 
 project = 'zeldareco'
-copyright = '2024, Edoardo Maragliano'
+copyright = '2026, Edoardo Maragliano'
 author = 'Edoardo Maragliano'
 release = '0.2.0'
 
