@@ -35,7 +35,7 @@ class DensityManager:
         boxcentre: Optional[np.ndarray] = None,
         padding: float = 0.01,
         MAS: str = "CIC",
-        dtype=np.float32,
+        dtype=np.float64,
         data_weights: Optional[np.ndarray] = None,
         random_weights: Optional[np.ndarray] = None,
         pbc: bool = False,
@@ -118,7 +118,7 @@ class DensityManager:
         """Lower corner of the survey box in the original survey frame."""
         return self.boxcentre - self.boxsize / 2.0
 
-    def compute_delta(self, threshold_randoms: float = 0.7, sm_mode: str = "wrap") -> np.ndarray:
+    def compute_delta(self, threshold_randoms: float = 0.01, sm_mode: str = "wrap") -> np.ndarray:
         """Compute the overdensity field on the mesh and cache it."""
         logger.debug("Assigning data to mesh...")
         data_rho = mass_assignment(
@@ -152,17 +152,15 @@ class DensityManager:
 
         logger.debug("Computing overdensity field...")
         alpha = np.sum(data_rho) / np.sum(random_rho)
-        delta_field = np.zeros_like(random_rho, dtype=self.mesh.dtype)
-        mask = random_rho > 0.0
-        delta_field[mask] = (data_rho[mask] - alpha * random_rho[mask])
-
-        threshold = threshold_randoms * random_rho.sum() / len(self.random_pos_box)  # random_rho.size
+        threshold = threshold_randoms * random_rho.sum() / len(self.random_pos_box)  
         th_mask = random_rho > threshold
 
-        delta_field[th_mask] /= (alpha * random_rho[th_mask])
-        delta_field[~th_mask] = 0.0
+        data_rho[th_mask] /= (alpha * random_rho[th_mask])
+        data_rho[th_mask] -= 1.0
 
-        self._delta_on_mesh = delta_field
+        data_rho[~th_mask] = 0.0
+
+        self._delta_on_mesh = data_rho
         return self._delta_on_mesh
 
     @property
