@@ -306,6 +306,7 @@ def tsc_ma_numba(pos: np.ndarray,
 
     return density_grid
 
+
 def tsc_ma(pos: np.ndarray, 
            boxsize: float, 
            nmesh: int, 
@@ -606,9 +607,7 @@ def tsc_interpolation_chunks(pos, boxsize, nmesh, weights, num_chunks=16, pbc=Tr
             dy = gy - iy
             dz = gz - iz
 
-            # 3. EXACT ANALYTIC TSC WEIGHTS
-            # We use Tuples instead of np.array() to guarantee zero memory 
-            # allocation overhead inside the hot loop.
+            # 3. TSC WEIGHTS
             # Index 0 is neighbor -1, Index 1 is NGP (0), Index 2 is neighbor +1
             wx = (0.5 * (0.5 - dx)**2, 0.75 - dx**2, 0.5 * (0.5 + dx)**2)
             wy = (0.5 * (0.5 - dy)**2, 0.75 - dy**2, 0.5 * (0.5 + dy)**2)
@@ -792,15 +791,16 @@ def grid_to_particle_cic(pos, grid, boxsize, pbc=True, dtype=np.float32):
                   u[0]*u[1]*u[2]*grid[index_u[0], index_u[1], index_u[2]])
     return out
 
-'''@njit
-def tsc_weight(d):
-    d = abs(d)
-    if d < 0.5:
-        return 0.75 - d*d
-    elif d < 1.5:
-        return 0.5*(1.5 - d)**2
+@njit(inline='always')
+def tsc_weight(dx):
+    """Helper function to calculate TSC weights."""
+    dx = abs(dx)
+    if dx < 0.5:
+        return 0.75 - dx*dx
+    elif dx < 1.5:
+        return 0.5 * (1.5 - dx)**2
     else:
-        return 0.0'''
+        return 0.0
 
 @njit(parallel=False, nopython=True, fastmath=True)
 def grid_to_particle_tsc(pos, grid, boxsize, pbc=True, dtype=np.float32):

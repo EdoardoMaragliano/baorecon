@@ -87,93 +87,6 @@ def interpolate_vector_field_np(field:np.ndarray, pos:np.ndarray, boxsize:float,
 #######################################################
 ###### DIVERGENCE OF A VECTOR FIELD ON THE MESH ######
 #######################################################
-def divergence(vector_field, div_algo='FFT', cell_size=None, kmesh=None) -> np.ndarray:
-    """
-    Compute the divergence of a vector field using the specified algorithm on the mesh.
-
-    Parameters
-    ----------
-    vector_field : ndarray
-        Vector field of shape (N,N,N,3).
-
-    div_algo : str, optional
-        Algorithm to compute the divergence. Options are 'finite_diff', 'periodic' and 'FFT'.
-        
-    Returns
-    -------
-    div : ndarray
-        Divergence of the vector field.
-    """
-    
-    if div_algo == 'finite_diff':
-        if cell_size is None:
-            raise ValueError("cell_size must be provided for finite difference divergence computation.")
-        div = divergence_finite_diff(vector_field, cell_size)
-    elif div_algo == 'finite_diff_periodic':
-        if cell_size is None:
-            raise ValueError("cell_size must be provided for periodic divergence computation.")
-        div = divergence_periodic(vector_field, cell_size)
-    elif div_algo == 'FFT':
-        if kmesh is None:
-            raise ValueError("kmesh must be provided for FFT divergence computation.")
-        div = divergence_FFT(vector_field, kmesh)
-    else:
-        raise ValueError("Invalid algorithm. Options are 'finite_diff', 'periodic' and 'FFT'.")
-        
-    return div
-
-def divergence_finite_diff(vector_field:np.ndarray, cell_size:float) -> np.ndarray:
-    """
-    Compute the divergence of a vector field.
-    Parameters
-    ----------
-    vector_field : ndarray
-        Vector field of shape (N,N,N,3).
-
-    cell_size : float
-        Size of each cell in the grid.
-        
-    Returns
-    -------
-    div : ndarray
-        Divergence of the vector field.
-    """
-    
-    if vector_field.shape[-1] != 3:
-        raise ValueError("The last dimension of vector_field must be of size 3 representing vector components.")
-    return (np.gradient(vector_field[..., 0], cell_size, axis=0) +
-            np.gradient(vector_field[..., 1], cell_size, axis=1) +
-            np.gradient(vector_field[..., 2], cell_size, axis=2))
-
-def divergence_periodic(vector_field:np.ndarray, cell_size:float) -> np.ndarray:
-    """
-    Compute the divergence of a vector field with periodic boundary conditions.
-    Parameters
-    ----------
-    vector_field : ndarray
-        Vector field of shape (N,N,N,3).
-
-    cell_size : float
-        Size of each cell in the grid.
-        
-    Returns
-    -------
-    div : ndarray
-        Divergence of the vector field with periodic boundary conditions.
-    """
-    if vector_field.shape[-1] != 3:
-        raise ValueError("The last dimension of vector_field must be of size 3 representing vector components.")
-    
-    # Compute finite difference with periodic boundary conditions
-    div_x = (np.roll(vector_field[..., 0], -1, axis=0) - np.roll(vector_field[..., 0], 1, axis=0)) / (2 * cell_size)
-    div_y = (np.roll(vector_field[..., 1], -1, axis=1) - np.roll(vector_field[..., 1], 1, axis=1)) / (2 * cell_size)
-    div_z = (np.roll(vector_field[..., 2], -1, axis=2) - np.roll(vector_field[..., 2], 1, axis=2)) / (2 * cell_size)
-    
-    # Sum the components to get the divergence
-    div = div_x + div_y + div_z
-    
-    return div
-
 
 def divergence_FFT(vector_field:np.ndarray, kmesh:np.ndarray) -> np.ndarray:
     """
@@ -204,24 +117,6 @@ def divergence_FFT(vector_field:np.ndarray, kmesh:np.ndarray) -> np.ndarray:
 
     divergence_from_fourier = sfft.irfftn(div_k, axes=(0,1,2), workers=-1)
     return divergence_from_fourier
-
-    
-##################################
-####### SUPPORT FUNCTIONS ########
-##################################
-
-# Funzioni di supporto
-def periodic_index(idx, size):
-    return (idx + size) % size
-
-def periodic_distance_mesh(i1, i2, size):
-    return min(abs(i1 - i2), size - abs(i1 - i2))
-
-def euclidean_distance_periodic_mesh(i1, j1, k1, i2, j2, k2, size, cell_size):
-    di = periodic_distance_mesh(i1, i2, size)
-    dj = periodic_distance_mesh(j1, j2, size)
-    dk = periodic_distance_mesh(k1, k2, size)
-    return (di**2 + dj**2 + dk**2)**0.5 * cell_size
 
 
 ####################################
@@ -345,83 +240,6 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
 
     return out
 
-'''
-@njit(parallel=True, fastmath=True)
-def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
-    """
-    TSC (Triangular Shaped Cloud) interpolation for vector fields.
-    
-    Parameters
-    ----------
-    pos : (N,3) array
-        Particle positions
-    field : (nmesh, nmesh, nmesh, 3) array
-        Grid field (vector field)
-    boxsize : float
-        Box size
-    pbc : bool
-        Apply periodic boundary conditions
-    dtype : numpy dtype
-        Output dtype
-    
-    Returns
-    -------
-    out : (N,3) array
-        Interpolated vector field at particle positions
-    """
-    N = pos.shape[0]
-    nmesh = field.shape[0]
-    out = np.zeros((N,3), dtype=dtype)
-    cell_size = boxsize / nmesh
-    
-    for idx in prange(N):
-        fx = pos[idx, 0] / cell_size
-        fy = pos[idx, 1] / cell_size
-        fz = pos[idx, 2] / cell_size
-
-        i = int(np.floor(fx))
-        j = int(np.floor(fy))
-        k = int(np.floor(fz))
-
-        dx = fx - i
-        dy = fy - j
-        dz = fz - k
-
-        # Weights TSC along each axis
-        wx = np.zeros(3, dtype=dtype)
-        wy = np.zeros(3, dtype=dtype)
-        wz = np.zeros(3, dtype=dtype)
-        
-        u = np.array([dx-1.0, dx, dx+1.0], dtype=dtype)
-        v = np.array([dy-1.0, dy, dy+1.0], dtype=dtype)
-        w = np.array([dz-1.0, dz, dz+1.0], dtype=dtype)
-
-        for n in range(3):
-            ux = abs(u[n])
-            uy = abs(v[n])
-            uz = abs(w[n])
-
-            # TSC kernel
-            wx[n] = 0.75 - ux*ux if ux <= 0.5 else 0.5*(1.5-ux)**2 if ux <= 1.5 else 0.0
-            wy[n] = 0.75 - uy*uy if uy <= 0.5 else 0.5*(1.5-uy)**2 if uy <= 1.5 else 0.0
-            wz[n] = 0.75 - uz*uz if uz <= 0.5 else 0.5*(1.5-uz)**2 if uz <= 1.5 else 0.0
-
-        # Loop over 27 neighboring cells
-        for ii in range(3):
-            for jj in range(3):
-                for kk in range(3):
-                    # Cell indices with PBC
-                    i_idx = (i+ii-1) % nmesh if pbc else min(max(i+ii-1,0), nmesh-1)
-                    j_idx = (j+jj-1) % nmesh if pbc else min(max(j+jj-1,0), nmesh-1)
-                    k_idx = (k+kk-1) % nmesh if pbc else min(max(k+kk-1,0), nmesh-1)
-
-                    w_tot = wx[ii]*wy[jj]*wz[kk]
-
-                    for c in range(3):
-                        out[idx,c] += field[i_idx,j_idx,k_idx,c]*w_tot
-
-    return out
-'''
 
 @njit(inline='always')
 def tsc_weight(dx):
@@ -607,11 +425,3 @@ def _gaussian_kernel(mesh, smoothing_radius:float) -> np.ndarray:
     kernel =  np.exp(-0.5 * np.sum(mesh.kmesh**2, axis=-1) * smoothing_radius**2)
     return kernel
     
-def _scale_factor(redshift:float) -> float:
-    """
-    Calculate the scale factor for the redshift saved in the object.
-
-    Returns:
-        float: The scale factor.
-    """
-    return 1.0 / (1 + redshift)

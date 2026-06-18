@@ -3,7 +3,7 @@ import numpy as np
 import warnings
 import logging
 from typing import Optional, Union
-from .field_ops import project_vector_field_jit, divergence
+from .field_ops import project_vector_field_jit
 from zeldareco.utils.loggers import setup_logger
 logger = setup_logger(__name__)
 
