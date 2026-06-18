@@ -7,9 +7,8 @@ from zeldareco.mesh.field_ops import (
     project_vector_field,
     project_vector_field_jit,
     interpolate_vector_field,
-    divergence,
+    divergence_FFT,
     smoothed_field,
-    _scale_factor
 )
 
 
@@ -31,16 +30,6 @@ class DummyMesh:
         
         kx, ky, kz = np.meshgrid(k_1d, k_1d, k_1d_r, indexing='ij')
         self.kmesh = np.stack([kx, ky, kz], axis=-1)
-
-
-# ==========================================
-# 2. UNIT TESTS: SCALE FACTOR
-# ==========================================
-def test_scale_factor():
-    """Test the cosmological scale factor mathematical definition a = 1/(1+z)."""
-    assert np.isclose(_scale_factor(0.0), 1.0)
-    assert np.isclose(_scale_factor(1.0), 0.5)
-    assert np.isclose(_scale_factor(9.0), 0.1)
 
 
 # ==========================================
@@ -129,31 +118,6 @@ def test_interpolate_constant_vector_field(mas_scheme):
 
 
 # ==========================================
-# 5. UNIT TESTS: DIVERGENCE (FINITE DIFF)
-# ==========================================
-def test_divergence_finite_diff():
-    """
-    Test the finite difference divergence using a linear vector field.
-    Given V = (1x, 2y, 3z), the mathematical divergence is exactly 1 + 2 + 3 = 6.
-    """
-    N = 10
-    cell_size = 1.0
-    
-    x = np.arange(N)
-    X, Y, Z = np.meshgrid(x, x, x, indexing='ij')
-    
-    field = np.stack([1.0 * X, 2.0 * Y, 3.0 * Z], axis=-1).astype(np.float64)
-    
-    div = divergence(field, div_algo='finite_diff', cell_size=cell_size)
-    
-    # Check only the inner volume (indices 1 to -1) because finite difference 
-    # boundary conditions at the edges of a linear field will differ slightly.
-    inner_div = div[1:-1, 1:-1, 1:-1]
-    
-    assert np.allclose(inner_div, 6.0), "Divergence of (x, 2y, 3z) must be 6"
-
-
-# ==========================================
 # 6. UNIT TESTS: DIVERGENCE (FFT)
 # ==========================================
 def test_divergence_fft():
@@ -175,7 +139,7 @@ def test_divergence_fft():
     
     expected_div = np.cos(X)
     
-    div = divergence(field, div_algo='FFT', kmesh=mesh.kmesh)
+    div = divergence_FFT(field, kmesh=mesh.kmesh)
     
     assert np.allclose(div, expected_div, atol=1e-7), "FFT Divergence failed on pure sine wave"
 

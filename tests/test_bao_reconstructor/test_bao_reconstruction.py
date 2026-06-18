@@ -23,8 +23,7 @@ def test_bao_reconstructor_infers_box_when_missing():
 
     recon = BAOReconstructor(data, rand, nmesh=8, boxsize=None, boxcentre=None, padding=0.5)
 
-    combined = np.concatenate((data, rand), axis=0)
-    expected_center = 0.5 * (combined.min(axis=0) + combined.max(axis=0))
+    expected_center = 0.5 * (rand.min(axis=0) + rand.max(axis=0))
 
     assert np.allclose(recon.data_pos, data)
     assert np.allclose(recon.random_pos, rand)

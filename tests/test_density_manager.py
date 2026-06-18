@@ -17,16 +17,15 @@ def test_density_manager_basic():
 
 
 def test_density_manager_infers_boxcentre_from_positions():
-    data = np.array([[10.0, 20.0, 30.0], [30.0, 40.0, 50.0]])
-    rand = np.array([[12.0, 22.0, 32.0], [28.0, 38.0, 48.0]])
+    data = np.random.uniform(0.0, 49.9, size=(100, 3)).astype(np.float32)
+    rand = np.random.uniform(0.0, 49.99, size=(100, 3)).astype(np.float32)
 
     dm = DensityManager(data, rand, nmesh=8, boxsize=None, boxcentre=None, padding=1.0, pbc=False)
 
-    combined = np.concatenate((data, rand), axis=0)
-    expected_center = 0.5 * (combined.min(axis=0) + combined.max(axis=0))
+    expected_center = 0.5 * (rand.min(axis=0) + rand.max(axis=0))
 
     assert np.allclose(dm.boxcentre, expected_center)
-    assert dm.boxsize >= np.max(combined.max(axis=0) - combined.min(axis=0))
+    assert dm.boxsize >= np.max(rand.max(axis=0) - rand.min(axis=0))
 
 
 
