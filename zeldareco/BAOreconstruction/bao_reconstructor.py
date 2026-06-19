@@ -44,7 +44,7 @@ class BAOReconstructor:
     padding : float, optional
         Padding for box size computation. Default is 0.0.
     los : str, optional
-        Line-of-sight direction ('x', 'y', 'z', or None for local). Default is 'z'.
+        Line-of-sight direction ('x', 'y', 'z', or None for local). Default is None.
     R_sm : float, optional
         Smoothing radius in Mpc/h. Default is 15.
     pbc : bool, optional
@@ -60,9 +60,9 @@ class BAOReconstructor:
     dtype : type, optional
         NumPy data type. Default is np.float32.
     threshold_randoms : float, optional
-        Default random-density threshold used by compute_delta_mesh(). Default is 0.7.
+        Default random-density threshold used by compute_delta_mesh(). Default is 0.01.
     solver_type : str, optional
-        Type of solver ('ifft' or 'multigrid'). Default is 'ifft'.
+        Type of solver ('ifft' or 'multigrid'). Default is 'multigrid'.
     n_iterations : int, optional
         Number of iterations (for compatibility). Default is 3.
     **solver_kwargs : dict
@@ -72,7 +72,7 @@ class BAOReconstructor:
     -------
     print_info()
         Print reconstruction parameters and settings.
-    compute_delta_mesh(threshold_randoms=0.7, sm_mode='wrap')
+    compute_delta_mesh(threshold_randoms=0.01, sm_mode='wrap')
         Compute the overdensity field on the mesh.
     run_reconstruction()
         Perform the full BAO reconstruction and return reconstructed positions.
@@ -91,7 +91,7 @@ class BAOReconstructor:
         boxsize: Optional[float] = None,
         boxcentre: Optional[np.ndarray] = None,
         padding: float = 0.01,
-        los: str = "z",
+        los: str = None,
         R_sm: float = 15,
         pbc: bool = False,
         rectype: str = "rec-sym",
@@ -99,8 +99,9 @@ class BAOReconstructor:
         bias: float = 1.0,
         MAS: str = "CIC",
         dtype=np.float32,
-        threshold_randoms: float = 0.7,
-        solver_type: str = "ifft",
+        threshold_randoms: float = 0.01,
+        solver_type: str = "multigrid",
+        mas_parallel: bool = False,
         n_iterations: int = 3,
         **solver_kwargs
     ) -> None:
@@ -128,6 +129,7 @@ class BAOReconstructor:
             pbc=pbc,
             los=los,
             smoothing_radius=R_sm,
+            mas_parallel=mas_parallel
         )
 
         
@@ -291,7 +293,7 @@ class BAOReconstructor:
         Parameters
         ----------
         threshold_randoms : float
-            Minimum fraction of average random density to consider.
+            Minimum fraction of average random density to consider. If none, the internal _threshold random is used, otherwise the internal _threshold_random is updated and the new is used.
         sm_mode : str
             Smoothing mode ('wrap' for periodic, 'reflect' for non-periodic).
 
@@ -302,6 +304,9 @@ class BAOReconstructor:
         """
         if threshold_randoms is None:
             threshold_randoms = self._threshold_randoms
+        else:
+            # update the internal threshold
+            self._threshold_randoms = threshold_randoms
         return self._density_manager.compute_delta(
             threshold_randoms=threshold_randoms,
             sm_mode=sm_mode,

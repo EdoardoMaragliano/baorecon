@@ -117,6 +117,7 @@ class ReconstructionPipeline:
             threshold_randoms=float(reconstruction_cfg.get("threshold_randoms", 0.7)),
             solver_type=reconstruction_cfg.get("solver_type", "ifft"),
             n_iterations=int(reconstruction_cfg.get("n_iterations", 3)),
+            mas_parallel=bool(reconstruction_cfg.get("mas_parallel", False))
         )
         return self.reconstructor
 
@@ -168,21 +169,111 @@ class ReconstructionPipeline:
         if random_mask is not None:
             self.catalog.apply_mask(np.asarray(random_mask, dtype=bool), is_data=False)
 
-    def save_outputs(self) -> Dict[str, str]:
-        """Save configured outputs into the output folder."""
-        if self.data_rec_xyz is None or self.random_rec_xyz is None:
-            self.reconstruct()
-        if self.data_rec_radec is None or self.random_rec_radec is None:
-            self.convert_back()
 
+    def _save_grids(self, output_folder: Path, base_name: str, save_options: set) -> Dict[str, str]:
+        """Salva potential e displacement grid appena dopo reconstruct(), prima di convert_back()."""
+        logger.info("saving grids...")
+        saved_paths: Dict[str, str] = {}
+
+        def _write_fits(data: np.ndarray, suffix: str) -> str:
+            path = str(output_folder / (base_name + suffix))
+            fits.writeto(path, data, overwrite=True, output_verify="silentfix")
+            logger.info("Saved FITS image to %s", path)
+            return path
+
+        if "grid_potential" in save_options:
+            logger.info("saving potential...")
+            assert self.reconstructor is not None and self.reconstructor.solver is not None
+            if (potential := self.reconstructor.solver.potential) is not None:
+                saved_paths["grid_potential"] = _write_fits(potential, "_potential.fits")
+            else:
+                logger.warning("Potential not available. Skipping.")
+
+        if "grid_displacement" in save_options:
+            logger.info("saving grid displacement...")
+            assert self.reconstructor is not None and self.reconstructor.solver is not None
+            if (displacement := self.reconstructor.solver.displacement) is not None:
+                saved_paths["grid_displacement"] = _write_fits(displacement, "_displacement.fits")
+            else:
+                logger.warning("Displacement not available. Skipping.")
+
+        if "reconstructor_object" in save_options:
+            logger.info("saving reconstruction object as pickle...")
+            path = str(output_folder / (base_name + "_reconstructor.pkl"))
+            with open(path, "wb") as f:
+                pickle.dump(self.reconstructor, f)
+            saved_paths["reconstructor_object"] = path
+            logger.info("Saved reconstructor object to %s", path)
+
+        return saved_paths
+
+
+    def _save_catalogs(self, output_folder: Path, base_name: str, save_options: set) -> Dict[str, str]:
+        """Salva i cataloghi FITS dopo convert_back(). Calcola displacement qui se richiesto,
+        poi libera data_pos_xyz / random_pos_xyz."""
+        logger.info("saving catalogs...")
+        saved_paths: Dict[str, str] = {}
+
+        if "catalogs" not in save_options and "tracer_displacements" not in save_options:
+            return saved_paths
+
+        data_displacements = None
+        random_displacements = None
+
+        if "tracer_displacements" in save_options:
+            logger.info("saving tracers' displacement")
+            assert self.data_pos_xyz is not None and self.data_rec_xyz is not None
+            assert self.random_pos_xyz is not None and self.random_rec_xyz is not None
+            logger.info("Calculating tracer displacements.")
+            data_displacements = self.data_pos_xyz - self.data_rec_xyz
+            random_displacements = self.random_pos_xyz - self.random_rec_xyz
+
+        data_table = self.catalog.build_output_table(
+            is_data=True,
+            reconstructed_radec=self.data_rec_radec,
+            reconstructed_redshift=self.data_rec_z,
+            displacements=data_displacements,
+        )
+        random_table = self.catalog.build_output_table(
+            is_data=False,
+            reconstructed_radec=self.random_rec_radec,
+            reconstructed_redshift=self.random_rec_z,
+            displacements=random_displacements,
+        )
+
+        if "catalogs" in save_options:
+            logger.info("saving reconstructed catalogs...")
+            data_path = str(output_folder / (base_name + "_data.fits"))
+            random_path = str(output_folder / (base_name + "_random.fits"))
+            data_table.write(data_path, overwrite=True)
+            random_table.write(random_path, overwrite=True)
+            saved_paths["data_catalog"] = data_path
+            saved_paths["random_catalog"] = random_path
+            logger.info("Saved catalogs to %s and %s", data_path, random_path)
+
+        return saved_paths
+
+
+    def _save_metadata(self, output_folder: Path, base_name: str) -> Dict[str, str]:
+        logger.info("Saving metadata...")
+        saved_paths: Dict[str, str] = {}
+        if self.config.output.get("save_metadata", True):
+            metadata_path = output_folder / (base_name + "_metadata.txt")
+            metadata_path.write_text(str(asdict(self.config)), encoding="utf-8")
+            saved_paths["metadata"] = str(metadata_path)
+        return saved_paths
+
+
+    # ── Sostituisci run() ───────────────────────────────────────────────────────
+
+    def run(self) -> Dict[str, str]:
+        """Run the full reconstruction pipeline con rilascio progressivo della memoria."""
         output_cfg = self.config.output
         save_options = set(output_cfg.get("save", ["catalogs"]))
         output_folder = Path(output_cfg.get("folder", "."))
         output_folder.mkdir(parents=True, exist_ok=True)
-
-        pattern = output_cfg.get("naming_pattern", "rec_{name}_{solver}")
         base_name = NamingTokenizer.format_name(
-            pattern,
+            output_cfg.get("naming_pattern", "rec_{name}_{solver}"),
             name=self.config.catalog_name or "catalog",
             solver=self.config.reconstruction.get("solver_type", "ifft"),
             nmesh=self.config.reconstruction.get("nmesh", 256),
@@ -191,85 +282,33 @@ class ReconstructionPipeline:
             H0=self.config.cosmology.get("H0", 67.11),
             Om0=self.config.cosmology.get("Om0", 0.3175),
         )
-
+        logger.info("UPDATED VERSION OF THE PIPELINE! WILL SAVE OUTPUTS AT RUNTIME")
         saved_paths: Dict[str, str] = {}
 
-        def _save_fits_image(data: np.ndarray, suffix: str) -> str:
-            path = str(output_folder / (base_name + suffix))
-            fits.writeto(path, data, overwrite=True, output_verify="silentfix")
-            logger.info("Saved FITS image to {0}".format(path))
-            return path
-
-        if "catalogs" in save_options or "tracer_displacements" in save_options:
-            data_displacements = None
-            random_displacements = None
-            if "tracer_displacements" in save_options:
-                # The displacement vector 's' is defined as s = x_initial - x_reconstructed
-                assert self.data_pos_xyz is not None and self.data_rec_xyz is not None
-                assert self.random_pos_xyz is not None and self.random_rec_xyz is not None
-                logger.info("Calculating tracer displacements from initial and reconstructed positions.")
-                data_displacements = self.data_pos_xyz - self.data_rec_xyz
-                random_displacements = self.random_pos_xyz - self.random_rec_xyz
-
-            data_table = self.catalog.build_output_table(
-                is_data=True,
-                reconstructed_radec=self.data_rec_radec,
-                reconstructed_redshift=self.data_rec_z,
-                displacements=data_displacements,
-            )
-            random_table = self.catalog.build_output_table(
-                is_data=False,
-                reconstructed_radec=self.random_rec_radec,
-                reconstructed_redshift=self.random_rec_z,
-                displacements=random_displacements,
-            )
-
-            if "catalogs" in save_options:
-                data_path = str(output_folder / (base_name + "_data.fits"))
-                random_path = str(output_folder / (base_name + "_random.fits"))
-                data_table.write(data_path, overwrite=True)
-                random_table.write(random_path, overwrite=True)
-                saved_paths["data_catalog"] = data_path
-                saved_paths["random_catalog"] = random_path
-                logger.info("Saved catalogs to {0} and {1}".format(data_path, random_path))
-
-        if "grid_potential" in save_options:
-            assert self.reconstructor is not None and self.reconstructor.solver is not None
-            potential = self.reconstructor.solver.potential
-            if potential is not None:
-                path = _save_fits_image(potential, "_potential.fits")
-                saved_paths["grid_potential"] = path
-            else:
-                logger.warning("Potential not computed or available in solver. Skipping save.")
-
-        if "grid_displacement" in save_options:
-            assert self.reconstructor is not None and self.reconstructor.solver is not None
-            displacement = self.reconstructor.solver.displacement
-            if displacement is not None:
-                path = _save_fits_image(displacement, "_displacement.fits")
-                saved_paths["grid_displacement"] = path
-            else:
-                logger.warning("Displacement not computed or available in solver. Skipping save.")
-
-        if "reconstructor_object" in save_options:
-            path = str(output_folder / (base_name + "_reconstructor.pkl"))
-            with open(path, "wb") as f:
-                pickle.dump(self.reconstructor, f)
-            saved_paths["reconstructor_object"] = path
-            logger.info("Saved reconstructor object to {0}".format(path))
-
-        if output_cfg.get("save_metadata", True):
-            metadata_path = output_folder / (base_name + "_metadata.txt")
-            metadata_path.write_text(str(asdict(self.config)), encoding="utf-8")
-            saved_paths["metadata"] = str(metadata_path)
-
-        logger.info("Saved outputs: {0}".format(list(saved_paths.keys())))
-        return saved_paths
-
-    def run(self) -> Dict[str, str]:
-        """Run the full reconstruction pipeline end-to-end."""
+        # 1. I/O + conversione
         self.load_catalogs()
         self.convert_to_xyz()
+
+        # 2. Ricostruzione
         self.reconstruct()
+
+        # 3. Salva grids e pkl → poi libera solver/mesh (parte più pesante)
+        saved_paths.update(self._save_grids(output_folder, base_name, save_options))
+        if self.reconstructor is not None:
+            self.reconstructor._solver = None   # libera campi griglia
+        # Se non servono displacement, libera subito anche pos_xyz
+        if "tracer_displacements" not in save_options:
+            self.data_pos_xyz = None
+            self.random_pos_xyz = None
+
+        # 4. Conversione back → salva cataloghi → libera pos_xyz
         self.convert_back()
-        return self.save_outputs()
+        saved_paths.update(self._save_catalogs(output_folder, base_name, save_options))
+        self.data_pos_xyz = None
+        self.random_pos_xyz = None
+
+        # 5. Metadata (trascurabile, nessun array grande)
+        saved_paths.update(self._save_metadata(output_folder, base_name))
+
+        logger.info("Saved outputs: %s", list(saved_paths.keys()))
+        return saved_paths

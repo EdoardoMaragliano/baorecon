@@ -1,7 +1,8 @@
 # mass_assignment.py
 
 import numpy as np
-from numba import njit, prange, set_num_threads, get_num_threads, get_thread_id
+from numba import njit, prange
+import numba
 import time
 from zeldareco.utils.loggers import setup_logger
 logger = setup_logger(__name__)
@@ -222,7 +223,8 @@ def cic_ma(pos: np.ndarray,
         field = cic_ma_numba(pos.astype(dtype), boxsize, nmesh, weights.astype(dtype), pbc, dtype=dtype)
         logger.info("Using single-threaded CIC interpolation.\n")
     else:
-        logger.info("Using %d threads for CIC interpolation.\n" % get_num_threads())
+        n_threads = numba.config.NUMBA_NUM_THREADS
+        logger.info("Using %d threads for CIC interpolation.\n", n_threads)
         field = cic_interpolation_chunks(pos=pos.astype(dtype), boxsize=boxsize, nmesh=nmesh, weights=weights.astype(dtype), pbc=pbc)
 
     if verbose:
@@ -361,7 +363,8 @@ def tsc_ma(pos: np.ndarray,
         logger.info("Using single-threaded TSC interpolation.\n")
         field = tsc_ma_numba(pos.astype(dtype), boxsize, nmesh, weights.astype(dtype), pbc=pbc, dtype=dtype)
     else:
-        logger.info("Using %d threads for TSC interpolation.\n" % get_num_threads())
+        n_threads = numba.config.NUMBA_NUM_THREADS
+        logger.info("Using %d threads for CIC interpolation.\n", n_threads)
         field = tsc_interpolation_chunks(pos.astype(dtype), boxsize, nmesh, weights.astype(dtype), pbc=pbc, dtype=dtype)
     if verbose:
         end_time = time.time()

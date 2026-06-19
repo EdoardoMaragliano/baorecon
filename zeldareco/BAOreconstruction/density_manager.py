@@ -17,15 +17,7 @@ from zeldareco.utils.formatters import (
 
 logger = setup_logger(__name__)
 
-
 class DensityManager:
-    """
-    Create and manage the overdensity field (delta) on data/random catalogues.
-
-    This class is independent and reusable by any solver. It centralizes
-    box/position/weights formatting and supports periodic wrapping (pbc).
-    """
-
     def __init__(
         self,
         data_pos: np.ndarray,
@@ -35,19 +27,15 @@ class DensityManager:
         boxcentre: Optional[np.ndarray] = None,
         padding: float = 0.01,
         MAS: str = "CIC",
-        dtype=np.float64,
+        dtype=np.float32,
         data_weights: Optional[np.ndarray] = None,
         random_weights: Optional[np.ndarray] = None,
         pbc: bool = False,
         los: Optional[str] = None,
         smoothing_radius: float = 0.0,
+        mas_parallel:bool = False
     ) -> None:
-        # store raw inputs
-        self._raw_data_pos = np.asarray(data_pos, dtype=dtype)
-        self._raw_random_pos = np.asarray(random_pos, dtype=dtype)
-        self._raw_data_weights = data_weights
-        self._raw_random_weights = random_weights
-
+        
         self.nmesh = int(nmesh)
         self.boxsize = boxsize 
         self.boxcentre = boxcentre
@@ -57,69 +45,52 @@ class DensityManager:
         self.pbc = pbc
         self.los = los
         self.smoothing_radius = smoothing_radius
+        self.mas_parallel = mas_parallel
 
-        # formatted/validated attributes (filled by _prepare_inputs)
-        self.data_pos_box: Optional[np.ndarray] = None
-        self.random_pos_box: Optional[np.ndarray] = None
-        self.data_weights: Optional[np.ndarray] = None
-        self.random_weights: Optional[np.ndarray] = None
+        # Salviamo la lunghezza dei random qui, perché non conserveremo l'array grezzo
+        self.n_randoms = len(random_pos)
 
         self._mesh: Optional[Mesh] = None
         self._delta_on_mesh: Optional[np.ndarray] = None
 
-        # perform formatting and validation
-        self._prepare_inputs()
+        # Eseguiamo la formattazione passando direttamente le variabili locali
+        self._prepare_inputs(data_pos, random_pos, data_weights, random_weights)
 
-    @property
-    def mesh(self) -> Mesh:
-        if self._mesh is None:
-            logger.debug("Initializing Mesh inside DensityManager")
-            self._mesh = Mesh(self.nmesh, self.boxsize, self.boxcentre, los=self.los, dtype=self.dtype)
-        return self._mesh
-
-    def _prepare_inputs(self) -> None:
-        """Infer/validate box parameters, format positions and weights, validate MAS.
-
-        This centralizes the behaviour so callers can pass raw inputs.
-        """
-        #format padding
+    def _prepare_inputs(self, data_pos, random_pos, data_weights, random_weights) -> None:
+        """Elabora le posizioni senza salvare copie inutili nello stato."""
+        
         self.padding = format_padding(self.padding, self.pbc)
         
         if self.boxsize is None:
-            self.boxsize = set_boxsize_from_positions(self._raw_random_pos, padding=self.padding)
-            logger.info(f"Box size not provided. Set to {self.boxsize} based on positions with padding {self.padding}.")
+            self.boxsize = set_boxsize_from_positions(random_pos, padding=self.padding)
+        self.boxsize = format_boxsize(self.boxsize, positions=random_pos, pbc=self.pbc)
 
-        self.boxsize = format_boxsize(self.boxsize, positions=self._raw_random_pos, pbc=self.pbc)
-
-        # infer or validate boxcentre
         if self.boxcentre is None:
-            self.boxcentre = set_boxcentre_from_positions(self._raw_random_pos, dtype=self.dtype)
-            logger.info(f"Box centre not provided. Set to {self.boxcentre} based on positions.")
-        
+            self.boxcentre = set_boxcentre_from_positions(random_pos, dtype=self.dtype)
         self.boxcentre = format_boxcentre(self.boxcentre, dtype=self.dtype)
 
-        # prepare positions: shift so that min corner is at 0 and optionally wrap
-        #min_corner = self.boxcentre - self.boxsize / 2.0
-
-        self.data_pos_box = survey_to_box_frame(self._raw_data_pos, self.min_corner, self.boxsize, 
+        # Creiamo gli array formattati.
+        self.data_pos_box = survey_to_box_frame(data_pos, self.min_corner, self.boxsize, 
                                                 pbc=self.pbc, dtype=self.dtype)
-        self.random_pos_box = survey_to_box_frame(self._raw_random_pos, self.min_corner, self.boxsize, 
+        self.random_pos_box = survey_to_box_frame(random_pos, self.min_corner, self.boxsize, 
                                                   pbc=self.pbc, dtype=self.dtype)
 
-        # format weights
-        self.data_weights = format_weights(self._raw_data_weights, size=len(self._raw_data_pos), dtype=self.dtype)
-        self.random_weights = format_weights(self._raw_random_weights, size=len(self._raw_random_pos), dtype=self.dtype)
-
-        # validate MAS string
+        self.data_weights = format_weights(data_weights, size=len(data_pos), dtype=self.dtype)
+        self.random_weights = format_weights(random_weights, size=self.n_randoms, dtype=self.dtype)
         self.MAS = format_mas(self.MAS)
 
     @property
     def min_corner(self) -> np.ndarray:
-        """Lower corner of the survey box in the original survey frame."""
         return self.boxcentre - self.boxsize / 2.0
 
-    def compute_delta(self, threshold_randoms: float = 0.01, sm_mode: str = "wrap") -> np.ndarray:
-        """Compute the overdensity field on the mesh and cache it."""
+    @property
+    def mesh(self) -> Mesh:
+        if self._mesh is None:
+            self._mesh = Mesh(self.nmesh, self.boxsize, self.boxcentre, los=self.los, dtype=self.dtype)
+        return self._mesh
+
+    def compute_delta(self, threshold_randoms: float = 0.01, sm_mode: str = "wrap", mas_parallel:bool=False) -> np.ndarray:
+        # --- 1. PROCESSIAMO I DATI ---
         logger.debug("Assigning data to mesh...")
         data_rho = mass_assignment(
             pos=self.data_pos_box,
@@ -130,11 +101,15 @@ class DensityManager:
             method=self.MAS,
             dtype=self.mesh.dtype,
             verbose=False,
-            parallel=False,
+            parallel=mas_parallel,
         )
-        del self.data_pos_box
+        
+        # Eliminiamo subito i dati dei cataloghi che non servono più
+        self.data_pos_box = None
+
         data_rho = smoothed_field(data_rho, self.mesh, self.smoothing_radius, pbc=self.pbc, mode=sm_mode)
 
+        # --- 2. PROCESSIAMO I RANDOM ---
         logger.debug("Assigning randoms to mesh...")
         random_rho = mass_assignment(
             pos=self.random_pos_box,
@@ -145,21 +120,23 @@ class DensityManager:
             method=self.MAS,
             dtype=self.mesh.dtype,
             verbose=False,
-            parallel=False,
+            parallel=mas_parallel,
         )
 
-        del self.random_pos_box
+        # Eliminiamo subito i cataloghi random
+        self.random_pos_box = None
+
         random_rho = smoothed_field(random_rho, self.mesh, self.smoothing_radius, pbc=self.pbc, mode=sm_mode)
 
+        # --- 3. CALCOLO OVERDENSITY ---
         logger.debug("Computing overdensity field...")
         alpha = np.sum(data_rho) / np.sum(random_rho)
-        threshold = threshold_randoms * random_rho.sum() / len(self._raw_random_pos)  
+        threshold = threshold_randoms * random_rho.sum() / self.n_randoms  # <--- Usiamo il valore salvato
         th_mask = random_rho > threshold
 
         data_rho /= alpha 
         np.divide(data_rho, random_rho, out=data_rho, where=th_mask)
         np.subtract(data_rho, 1.0, out=data_rho, where=th_mask)
-
         data_rho[~th_mask] = 0.0
 
         del random_rho
@@ -171,5 +148,5 @@ class DensityManager:
     @property
     def delta_on_mesh(self) -> np.ndarray:
         if self._delta_on_mesh is None:
-            self.compute_delta()
+            self.compute_delta(mas_parallel=self.mas_parallel)
         return self._delta_on_mesh

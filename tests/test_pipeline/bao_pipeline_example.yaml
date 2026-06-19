@@ -38,7 +38,7 @@ cosmology:
 reconstruction:
   redshift: 1
   RSDspace: "RedshiftSpace"
-  nmesh: 256
+  nmesh: 1024
   boxsize: null
   boxcentre: null
   padding: 100.0
@@ -50,7 +50,8 @@ reconstruction:
   bias: 1.7
   MAS: "CIC"
   threshold_randoms: 0.7
-  solver_type: "ifft"
+  solver_type: "multigrid"
+  mas_parallel: true
 
 masking:
   apply_mask: false
@@ -63,9 +64,9 @@ output:
   # Multiple options can be active at the same time by uncommenting them.
   save:
     - catalogs              # (Default) Reconstructed FITS catalogs.
-    - tracer_displacements  # Adds S_X, S_Y, S_Z columns to the FITS catalogs.
-    - grid_potential        # Scalar potential (phi) on the grid (FITS image).
-    - grid_displacement     # Displacement field (psi) on the grid (FITS image).
-    - reconstructor_object  # The full BAOReconstructor object (pickle file for debugging).
+    #- tracer_displacements  # Adds S_X, S_Y, S_Z columns to the FITS catalogs.
+    #- grid_potential        # Scalar potential (phi) on the grid (FITS image).
+    #- grid_displacement     # Displacement field (psi) on the grid (FITS image).
+    #- reconstructor_object  # The full BAOReconstructor object (pickle file for debugging).
 
 catalog_name: "sample_survey"
