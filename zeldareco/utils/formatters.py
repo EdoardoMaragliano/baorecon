@@ -59,7 +59,7 @@ def format_weights(weights, size, dtype=np.float32) -> np.ndarray:
     else:
         _check_weights(weights)
 
-    return weights.astype(dtype)
+    return np.asarray(weights, dtype=dtype)
 
 def format_rectype(reconstruction_type: str) -> str:
     """

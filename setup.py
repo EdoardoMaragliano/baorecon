@@ -1,17 +1,8 @@
 from pathlib import Path
 
 from setuptools import setup, find_packages
+from zeldareco import __version__
 
-
-'''def read_requirements(path):
-    try:
-        return [
-            line.strip()
-            for line in Path(path).read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#") and not line.strip().startswith("-r")
-        ]
-    except FileNotFoundError:
-        return []'''
 
 def read_requirements(path):
     req_file = Path(path)
@@ -45,9 +36,9 @@ extras_require = {
 
 setup(
     name="zeldareco",
-    version="0.2.0",
+    version=__version__,
     author="Edoardo Maragliano",
-    author_email="edoardo.maragliano@edu.unige.it",
+    author_email="edoardo.maragliano@gmail.com",
     description="A simple package to perform Zeldovich reconstruction of density and velocity fields.",
     long_description=long_description,
     long_description_content_type="text/markdown",

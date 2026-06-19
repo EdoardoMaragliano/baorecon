@@ -16,3 +16,5 @@ __all__ = [
     "radec_z_to_xyz",
     "xyz_to_radec_z",
 ]
+
+__version__ = "0.2.0"

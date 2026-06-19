@@ -43,8 +43,8 @@ class DensityManager:
         smoothing_radius: float = 0.0,
     ) -> None:
         # store raw inputs
-        self._raw_data_pos = np.array(data_pos, copy=True)
-        self._raw_random_pos = np.array(random_pos, copy=True)
+        self._raw_data_pos = np.asarray(data_pos, dtype=dtype)
+        self._raw_random_pos = np.asarray(random_pos, dtype=dtype)
         self._raw_data_weights = data_weights
         self._raw_random_weights = random_weights
 
@@ -107,8 +107,8 @@ class DensityManager:
                                                   pbc=self.pbc, dtype=self.dtype)
 
         # format weights
-        self.data_weights = format_weights(self._raw_data_weights, size=len(self.data_pos_box), dtype=self.dtype)
-        self.random_weights = format_weights(self._raw_random_weights, size=len(self.random_pos_box), dtype=self.dtype)
+        self.data_weights = format_weights(self._raw_data_weights, size=len(self._raw_data_pos), dtype=self.dtype)
+        self.random_weights = format_weights(self._raw_random_weights, size=len(self._raw_random_pos), dtype=self.dtype)
 
         # validate MAS string
         self.MAS = format_mas(self.MAS)
@@ -132,7 +132,7 @@ class DensityManager:
             verbose=False,
             parallel=False,
         )
-
+        del self.data_pos_box
         data_rho = smoothed_field(data_rho, self.mesh, self.smoothing_radius, pbc=self.pbc, mode=sm_mode)
 
         logger.debug("Assigning randoms to mesh...")
@@ -148,17 +148,22 @@ class DensityManager:
             parallel=False,
         )
 
+        del self.random_pos_box
         random_rho = smoothed_field(random_rho, self.mesh, self.smoothing_radius, pbc=self.pbc, mode=sm_mode)
 
         logger.debug("Computing overdensity field...")
         alpha = np.sum(data_rho) / np.sum(random_rho)
-        threshold = threshold_randoms * random_rho.sum() / len(self.random_pos_box)  
+        threshold = threshold_randoms * random_rho.sum() / len(self._raw_random_pos)  
         th_mask = random_rho > threshold
 
-        data_rho[th_mask] /= (alpha * random_rho[th_mask])
-        data_rho[th_mask] -= 1.0
+        data_rho /= alpha 
+        np.divide(data_rho, random_rho, out=data_rho, where=th_mask)
+        np.subtract(data_rho, 1.0, out=data_rho, where=th_mask)
 
         data_rho[~th_mask] = 0.0
+
+        del random_rho
+        del th_mask
 
         self._delta_on_mesh = data_rho
         return self._delta_on_mesh
