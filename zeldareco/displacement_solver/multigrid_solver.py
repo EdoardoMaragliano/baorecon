@@ -163,17 +163,18 @@ class MultigridSolver(PoissonSolver):
         dtype = np.float32,
         **kwargs,
     ) -> None:
+        
+        if f is None:
+            raise ValueError("growth rate f must be provided!")
+        if bias is None:
+            raise ValueError("bias must be provided!")
+        
         super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace)
         self._use_plane_parallel = use_plane_parallel
         self._raw: Optional[_RawMultigrid] = None
         self._kwargs = kwargs
         self._dtype = dtype
 
-        if f is None:
-            raise ValueError("growth rate f must be provided!")
-        if bias is None:
-            raise ValueError("bias must be provided!")
-        
     def _compute_potential(self) -> None:
         N = int(self.mesh.nmesh)
         box = self.mesh.boxsize

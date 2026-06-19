@@ -25,8 +25,23 @@ Run::
     python benchmarks/bench_pipeline.py
     python benchmarks/bench_pipeline.py --quick
 """
-
 from __future__ import annotations
+
+import os
+
+# Definisci il numero di thread che vuoi dedicare al processo
+THREADS = "8"
+
+# 1. Numba Threading
+#os.environ["NUMBA_THREADING_LAYER"] = "tbb"
+os.environ["NUMBA_NUM_THREADS"] = THREADS
+
+# 2. NumPy backend Threading (copre MKL, OpenBLAS e OpenMP standard)
+os.environ["OMP_NUM_THREADS"] = THREADS
+os.environ["MKL_NUM_THREADS"] = THREADS
+os.environ["OPENBLAS_NUM_THREADS"] = THREADS
+os.environ["NUMEXPR_NUM_THREADS"] = THREADS
+
 
 import argparse
 
@@ -37,7 +52,7 @@ import bench_common as bc
 import sys
 sys.path.insert(0, '/home/emaragliano/Work/Projects/Dottorato/baorecon_main')
 
-NMESH = [128, 256, 512]
+NMESH = [128, 256, 512, 1024]
 N_PARTICLES = [int(1e6)]
 N_ITERATIONS = 3
 F_GROWTH = 0.8
@@ -84,7 +99,7 @@ def _worker_baorecon(n, nmesh, repeats, solver_type):
     def run():
         recon = BAOReconstructor(
             data_pos=data_xyz, random_pos=random_xyz,
-            data_weights=weights_d, random_weights=weights_r
+            data_weights=weights_d, random_weights=weights_r,
             RSDspace="RedshiftSpace", 
             nmesh=nmesh,
             boxsize=boxsize,           # explicit padded cubic box
@@ -92,7 +107,7 @@ def _worker_baorecon(n, nmesh, repeats, solver_type):
             padding=0.0,               # ignored: the box is already padded
             los=None, R_sm=R_SMOOTH, pbc=False, rectype="rec-sym",
             f=F_GROWTH, bias=BIAS, MAS="CIC", dtype=np.float32,
-            solver_type=solver_type,
+            solver_type=solver_type, mas_parallel=True
         )
         return recon.run_reconstruction()
 
@@ -161,7 +176,9 @@ def run(n_particles, nmeshes, repeats, solver):
     for n in n_particles:
         print(f"N={n:.0e}")
         for nmesh in nmeshes: # <-- Nuovo ciclo per iterare su NMESH
+            print(f"nmesh={nmesh}")
             for backend in backends:
+                print(f"backend: {backend}")
                 label = f"{backend} N={n:.0e} mesh={nmesh}"
                 spec = {"backend": backend, "n_particles": n, "nmesh": nmesh,
                         "repeats": repeats, "solver": solver}
