@@ -34,6 +34,9 @@ import numpy as np
 
 import bench_common as bc
 
+import sys
+sys.path.insert(0, '/home/emaragliano/Work/Projects/Dottorato/baorecon_main')
+
 NMESH = [128, 256, 512]
 N_PARTICLES = [int(1e6)]
 N_ITERATIONS = 3
@@ -65,6 +68,8 @@ def _worker_baorecon(n, nmesh, repeats, solver_type):
 
     backend = "baorecon_cpu"
     data_xyz, random_xyz = _make_mock_xyz(n)
+    weights_d = np.ones(len(data_xyz), dtype=np.float32)
+    weights_r = np.ones(len(random_xyz), dtype=np.float32)
 
     # Cubic box derived exactly as pyrecon does, using the padding as a percentage
     # (2%) and without wasting RAM.
@@ -79,6 +84,7 @@ def _worker_baorecon(n, nmesh, repeats, solver_type):
     def run():
         recon = BAOReconstructor(
             data_pos=data_xyz, random_pos=random_xyz,
+            data_weights=weights_d, random_weights=weights_r
             RSDspace="RedshiftSpace", 
             nmesh=nmesh,
             boxsize=boxsize,           # explicit padded cubic box

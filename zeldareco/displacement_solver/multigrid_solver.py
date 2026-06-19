@@ -8,6 +8,7 @@ from zeldareco.displacement_solver.multigrid_lib import (
     residual_jit,
     reduce_jit,
     prolong_jit,
+    gradient_periodic_jit
 )
 
 logger = setup_logger(__name__)
@@ -20,26 +21,28 @@ class _RawMultigrid:
     """
 
     class GridLevel:
-        def __init__(self, N: int, boxsize: np.ndarray, boxcenter: np.ndarray):
+        def __init__(self, N: int, boxsize: np.ndarray, boxcenter: np.ndarray, dtype=np.float32):
             self.N = N
+            self._dtype = dtype
             self.boxsize = boxsize
             self.boxcenter = boxcenter
-            self.dims = np.array([N, N, N], dtype=np.int64)
+            self.dims = np.array([N, N, N], dtype=np.int32)
             self.local_x = N
             self.offset_x = 0
             self.size = N**3
-            self.v = np.zeros(self.size, dtype=np.float64)
-            self.f = np.zeros(self.size, dtype=np.float64)
-            self.temp = np.zeros(self.size, dtype=np.float64)
+            self.v = np.zeros(self.size, dtype=dtype)
+            self.f = np.zeros(self.size, dtype=dtype)
+            self.temp = np.zeros(self.size, dtype=dtype)
 
-    def __init__(self, N_fine: int, boxsize: Union[float, int, np.ndarray], boxcenter: Optional[np.ndarray] = None, use_plane_parallel: bool = True):
+    def __init__(self, N_fine: int, boxsize: Union[float, int, np.ndarray], boxcenter: Optional[np.ndarray] = None, use_plane_parallel: bool = True, dtype=np.float32):
         self.levels = []
+        self._dtype = dtype
         self.boxsize = self._format_boxsize(boxsize)
         self.boxcenter = boxcenter 
         self.use_plane_parallel = use_plane_parallel
         curr_N = int(N_fine)
         while curr_N >= 4:
-            self.levels.append(_RawMultigrid.GridLevel(N=curr_N, boxsize=self.boxsize, boxcenter=self.boxcenter))
+            self.levels.append(_RawMultigrid.GridLevel(N=curr_N, boxsize=self.boxsize, boxcenter=self.boxcenter, dtype=dtype))
             curr_N //= 2
         self.num_levels = len(self.levels)
         logger.debug(f"LOS plane-parallel: {self.use_plane_parallel}.")
@@ -48,11 +51,11 @@ class _RawMultigrid:
     def _format_boxsize(self, boxsize):
         if isinstance(boxsize, (float, int)):
             boxsize = float(boxsize)
-            boxsize = np.array([boxsize, boxsize, boxsize], dtype=float)
+            boxsize = np.array([boxsize, boxsize, boxsize], dtype=self._dtype)
             return boxsize
         elif isinstance(boxsize, np.ndarray):
             if boxsize.shape == (3,):
-                boxsize = boxsize.astype(float)
+                boxsize = boxsize.astype(self._dtype)
                 return boxsize
             else:
                 raise ValueError("boxsize as ndarray must have shape (3,)")
@@ -153,35 +156,47 @@ class MultigridSolver(PoissonSolver):
         self,
         delta_on_mesh: np.ndarray,
         mesh: Mesh,
-        f: float = None,
-        bias: float = 1.0,
-        RSDspace: str = "RealSpace",
-        use_plane_parallel: bool = True,
+        f: float,
+        bias: float,
+        RSDspace: str = "RedshiftSpace",
+        use_plane_parallel: bool = False,
+        dtype = np.float32,
         **kwargs,
     ) -> None:
         super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace)
         self._use_plane_parallel = use_plane_parallel
         self._raw: Optional[_RawMultigrid] = None
         self._kwargs = kwargs
+        self._dtype = dtype
 
+        if f is None:
+            raise ValueError("growth rate f must be provided!")
+        if bias is None:
+            raise ValueError("bias must be provided!")
+        
     def _compute_potential(self) -> None:
         N = int(self.mesh.nmesh)
         box = self.mesh.boxsize
         boxcenter = self.mesh.boxcentre
         if np.isscalar(box):
-            box = np.array([box, box, box], dtype=float)
-        delta = np.ascontiguousarray(self.delta_on_mesh.astype(np.float64, copy=False))
+            box = np.array([box, box, box], dtype=self._dtype)
+        delta = np.ascontiguousarray(self.delta_on_mesh.astype(self._dtype, copy=False))
 
         if self._raw is None:
             logger.debug("Initializing internal RawMultigrid")
-            self._raw = _RawMultigrid(N_fine=N, boxsize=box, boxcenter=boxcenter, use_plane_parallel=self._use_plane_parallel)
+            self._raw = _RawMultigrid(
+                N_fine=N, boxsize=box, 
+                boxcenter=boxcenter, 
+                use_plane_parallel=self._use_plane_parallel, 
+                dtype=self._dtype
+            )
 
         # los from mesh if plane-parallel, otherwise dummy (for jit functions that expect it, but it won't be used in that case)
         if self._use_plane_parallel:
             # prendere il versore globale (prima cella)
-            current_los = self.mesh.los_versor[0, 0, 0].astype(np.float64)
+            current_los = self.mesh.los_versor[0, 0, 0].astype(self._dtype)
         else:
-            current_los = np.array([0.0, 0.0, 0.0], dtype=np.float64)
+            current_los = np.array([0.0, 0.0, 0.0], dtype=self._dtype)
 
         logger.debug("Calling RawMultigrid.solve_fmg()")
         potential = self._raw.solve_fmg(delta.reshape((N, N, N)), beta=self.f/self.bias, los=current_los,
@@ -193,40 +208,20 @@ class MultigridSolver(PoissonSolver):
             potential = potential / float(self.bias)
         self._potential = np.asarray(potential)
 
-        # Compute displacement on the mesh via centered finite differences (periodic)
-        # This is currently done in Python for simplicity, but could be optimized with a JIT function if needed.
-        # Moreover, if one only needs the displacement at particle positions, 
-        # it would be more efficient to directly interpolate the potential gradient at those positions 
-        # without computing the full displacement field on the mesh. 
-        # See the `interpolate_potential_jit` function in `multigrid_lib.py` for a potential implementation of this approach.
 
-
-
-    def _compute_displacement(self):
-        """
-        Computes the displacement field (gradient) from the scalar potential on the grid.
-        Uses centered finite differences with periodic boundary conditions via np.roll.
-            
-        Returns
-        -------
-        displacement : ndarray (N, N, N, 3)
-            The displacement field vectors on the grid nodes.
-        """
-
+    def _compute_displacement(self) -> None:
         N = int(self.mesh.nmesh)
-        box = self.mesh.boxsize
-        if np.isscalar(box):
-            box = np.array([box, box, box], dtype=float)
+        boxsize = self.mesh.boxsize
+        if np.isscalar(boxsize):
+            dx = dy = dz = float(boxsize) / N
+        else:
+            boxsize = np.asarray(boxsize, dtype=self._dtype)
+            dx = float(boxsize[0]) / N
+            dy = float(boxsize[1]) / N
+            dz = float(boxsize[2]) / N
 
         phi = self.potential.reshape((N, N, N))
-
-        dx = box[0] / float(N)
-        dy = box[1] / float(N)
-        dz = box[2] / float(N)
-
-        grad_x = (np.roll(phi, -1, axis=0) - np.roll(phi, 1, axis=0)) / (2.0 * dx)
-        grad_y = (np.roll(phi, -1, axis=1) - np.roll(phi, 1, axis=1)) / (2.0 * dy)
-        grad_z = (np.roll(phi, -1, axis=2) - np.roll(phi, 1, axis=2)) / (2.0 * dz)
-
-        disp = -np.stack((grad_x, grad_y, grad_z), axis=-1)
-        self._displacement = np.asarray(disp)
+        displacement = np.empty((N, N, N, 3), dtype=phi.dtype)
+        gradient_periodic_jit(phi, displacement, dx, dy, dz)
+        displacement *= -1
+        self._displacement = displacement

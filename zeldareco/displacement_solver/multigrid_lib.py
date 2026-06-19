@@ -236,18 +236,21 @@ def reduce_jit(v1h: np.ndarray, v2h: np.ndarray, nmesh_dims_fine: np.ndarray,
 @njit(fastmath=True, parallel=True, nogil=True, cache=True) 
 def jacobi_jit(v: np.ndarray, f: np.ndarray, jac_buffer: np.ndarray, nmesh_dims: np.ndarray, 
             localnmeshx: int, offsetx: int, boxsize: np.ndarray, boxcenter: np.ndarray, 
-            beta: float, damping_factor: float, los_vector: np.ndarray, use_plane_parallel: bool, dtype=np.float64):
+            beta: float, damping_factor: float, los_vector: np.ndarray, use_plane_parallel: bool):
     
     nx_global = nmesh_dims[0]
     ny = nmesh_dims[1]
     nz = nmesh_dims[2]
+
+    grid_dtype = v.dtype
+    grid_type_func = v.dtype.type
     
     # Pre-allocations for geometry
-    cellsize    = np.empty(3, dtype=dtype)
-    cellsize2   = np.empty(3, dtype=dtype)
-    icellsize2  = np.empty(3, dtype=dtype)
-    min_corner_mesh = np.empty(3, dtype=dtype)
-    losn        = np.empty(3, dtype=dtype)
+    cellsize    = np.empty(3, dtype=grid_dtype)
+    cellsize2   = np.empty(3, dtype=grid_dtype)
+    icellsize2  = np.empty(3, dtype=grid_dtype)
+    min_corner_mesh = np.empty(3, dtype=grid_dtype)
+    losn        = np.empty(3, dtype=grid_dtype)
     
     for i in range(3):
         cellsize[i] = boxsize[i] / nmesh_dims[i]
@@ -292,7 +295,7 @@ def jacobi_jit(v: np.ndarray, f: np.ndarray, jac_buffer: np.ndarray, nmesh_dims:
                 
                 # Equation coefficients
                 denom = (cellsize2[0]*px*px + cellsize2[1]*py*py + cellsize2[2]*pz*pz)
-                g = 0.0 if denom == 0.0 else beta / denom
+                g = grid_type_func(0.0) if denom == 0.0 else grid_type_func(beta / denom)
                 
                 gpx2 = icellsize2[0] + g * px * px
                 gpy2 = icellsize2[1] + g * py * py
@@ -335,7 +338,8 @@ def jacobi_jit(v: np.ndarray, f: np.ndarray, jac_buffer: np.ndarray, nmesh_dims:
 
                 # Diagonal normalization step
                 diag = 2.0 * (gpx2 + gpy2 + gpz2)
-                jac_buffer[ii] = 0.0 if diag == 0.0 else res / diag
+                grid_type_func = v.dtype.type
+                jac_buffer[ii] = grid_type_func(0.0) if diag == 0.0 else grid_type_func(res / diag)
 
     # Final damped Jacobi update
     for i in prange(localnmeshx * stride_yz):
@@ -380,13 +384,16 @@ def residual_jit(v: np.ndarray, f: np.ndarray, res_out: np.ndarray, nmesh_dims: 
     nx_global = nmesh_dims[0]
     ny = nmesh_dims[1]
     nz = nmesh_dims[2]
+
+    grid_dtype = v.dtype
+    grid_type_func = v.dtype.type
     
     # --- SETUP GEOMETRICO (Invariato) ---
-    cellsize = np.empty(3, dtype=np.float64)
-    cellsize2 = np.empty(3, dtype=np.float64)
-    icellsize2 = np.empty(3, dtype=np.float64)
-    min_corner_mesh = np.empty(3, dtype=np.float64)
-    losn = np.empty(3, dtype=np.float64)
+    cellsize = np.empty(3, dtype=grid_dtype)
+    cellsize2 = np.empty(3, dtype=grid_dtype)
+    icellsize2 = np.empty(3, dtype=grid_dtype)
+    min_corner_mesh = np.empty(3, dtype=grid_dtype)
+    losn = np.empty(3, dtype=grid_dtype)
     
     for i in range(3):
         cellsize[i] = boxsize[i] / nmesh_dims[i]
@@ -428,7 +435,7 @@ def residual_jit(v: np.ndarray, f: np.ndarray, res_out: np.ndarray, nmesh_dims: 
                 
                 # Coefficienti
                 denom = (cellsize2[0]*px*px + cellsize2[1]*py*py + cellsize2[2]*pz*pz)
-                g = 0.0 if denom == 0.0 else beta / denom
+                g = grid_type_func(0.0) if denom == 0.0 else grid_type_func(beta / denom)
                 
                 gpx2 = icellsize2[0] + g * px * px
                 gpy2 = icellsize2[1] + g * py * py
@@ -517,12 +524,7 @@ def interpolate_potential_jit_cic(
 
     # Gestione boxsize (scalare vs array)
     bs = boxsize
-    '''np.empty(3, dtype=np.float64)
-    if np.isscalar(boxsize):
-        bs[:] = boxsize
-    else:
-        for k in range(3):
-            bs[k] = boxsize.flat[k] # .flat per sicurezza se boxsize è strano'''
+
 
     # Fattori inversi per convertire pos -> indice
     inv_dx = nx / bs[0]
@@ -733,3 +735,29 @@ def interpolate_potential_tsc_jit(
         shifts[ii, 0] = -px * norm[0]
         shifts[ii, 1] = -py * norm[1]
         shifts[ii, 2] = -pz * norm[2]
+
+
+###########################
+########## GRADIENT
+###########################
+@njit(parallel=True, fastmath=True)
+def gradient_periodic_jit(phi, displacement, dx, dy, dz):
+    """Centered finite-difference gradient with periodic indices.
+
+    Writes ``grad phi`` into the pre-allocated ``displacement`` buffer of shape
+    ``(Nx, Ny, Nz, 3)``. The minus sign for ``Psi = -grad phi`` is applied by
+    the caller, not here.
+    """
+    nx, ny, nz = phi.shape
+    for i in prange(nx):
+        ip = (i + 1) % nx
+        im = (i - 1 + nx) % nx
+        for j in range(ny):
+            jp = (j + 1) % ny
+            jm = (j - 1 + ny) % ny
+            for k in range(nz):
+                kp = (k + 1) % nz
+                km = (k - 1 + nz) % nz
+                displacement[i,j,k,0] = (phi[ip,j,k] - phi[im,j,k]) / (2*dx)
+                displacement[i,j,k,1] = (phi[i,jp,k] - phi[i,jm,k]) / (2*dy)
+                displacement[i,j,k,2] = (phi[i,j,kp] - phi[i,j,km]) / (2*dz)
