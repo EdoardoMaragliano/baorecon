@@ -78,7 +78,7 @@ def _make_mock_xyz(n):
     return data_xyz, random_xyz
 
 
-def _worker_baorecon(n, nmesh, repeats, solver_type):
+def _worker_baorecon(n, nmesh, repeats, solver_type, mas_parallel):
     from zeldareco.BAOreconstruction.bao_reconstructor import BAOReconstructor
 
     backend = "baorecon_cpu"
@@ -107,7 +107,7 @@ def _worker_baorecon(n, nmesh, repeats, solver_type):
             padding=0.0,               # ignored: the box is already padded
             los=None, R_sm=R_SMOOTH, pbc=False, rectype="rec-sym",
             f=F_GROWTH, bias=BIAS, MAS="CIC", dtype=np.float32,
-            solver_type=solver_type, mas_parallel=True
+            solver_type=solver_type, mas_parallel=mas_parallel
         )
         return recon.run_reconstruction()
 
@@ -158,18 +158,23 @@ def worker(spec):
     nmesh = int(spec["nmesh"])
     repeats = int(spec["repeats"])
     solver = str(spec["solver"])
+    
+    # Handle stringified booleans natively just in case serialization alters it
+    mas_parallel = spec.get("mas_parallel") in [True, "True", "true"]
+
     if backend == "pyrecon":
         return _worker_pyrecon(n, nmesh, repeats, solver)
-    return _worker_baorecon(n, nmesh, repeats, solver)
+    return _worker_baorecon(n, nmesh, repeats, solver, mas_parallel)
 
 
 # ---------------------------------------------------------------------------
 # Parent side (orchestration only -- no zeldareco / pyrecon imports)
 # ---------------------------------------------------------------------------
-def run(n_particles, nmeshes, repeats, solver):
+def run(n_particles, nmeshes, repeats, solver, mas_parallel):
     info = bc.system_info()
     rows = []
-    print(f"Pipeline (end-to-end) benchmark | solver={solver} | repeats={repeats}\n")
+    print('benchmark of main branch')
+    print(f"Pipeline (end-to-end) benchmark | solver={solver} | repeats={repeats} | mas_parallel={mas_parallel}\n")
 
     backends = ["baorecon_cpu", "pyrecon"]
 
@@ -180,8 +185,14 @@ def run(n_particles, nmeshes, repeats, solver):
             for backend in backends:
                 print(f"backend: {backend}")
                 label = f"{backend} N={n:.0e} mesh={nmesh}"
-                spec = {"backend": backend, "n_particles": n, "nmesh": nmesh,
-                        "repeats": repeats, "solver": solver}
+                spec = {
+                    "backend": backend, 
+                    "n_particles": n, 
+                    "nmesh": nmesh,
+                    "repeats": repeats, 
+                    "solver": solver,
+                    "mas_parallel": mas_parallel
+                }
                 rows.extend(bc.spawn_worker(__file__, spec, label=label))
 
     bc.print_table(rows, title="End-to-end pipeline")
@@ -200,13 +211,16 @@ def main():
     parser.add_argument("--repeats", type=int, default=1,
                         help="number of timed repetitions (default 5)")
     parser.add_argument("--solver", type=str, choices=["multigrid", "ifft"],
-                        default="multigrid", help="either multigrid or ifft (default ifft)")
+                        default="multigrid", help="either multigrid or ifft (default multigrid)")
+    parser.add_argument("--mas-parallel", action="store_true", default=False,
+                        help="enable mass assignment parallelization in baorecon (default: False)")
+    
     args = parser.parse_args()
 
     if args.quick:
-        run([int(1e4), int(1e5)], [64], repeats=max(2, args.repeats), solver=args.solver)
+        run([int(1e4), int(1e5)], [64], repeats=max(2, args.repeats), solver=args.solver, mas_parallel=args.mas_parallel)
     else:
-        run(N_PARTICLES, NMESH, repeats=args.repeats, solver=args.solver)
+        run(N_PARTICLES, NMESH, repeats=args.repeats, solver=args.solver, mas_parallel=args.mas_parallel)
 
 
 if __name__ == "__main__":

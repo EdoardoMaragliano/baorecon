@@ -1,7 +1,7 @@
 from pathlib import Path
 
 from setuptools import setup, find_packages
-from zeldareco import __version__
+
 
 
 def read_requirements(path):
@@ -36,7 +36,7 @@ extras_require = {
 
 setup(
     name="zeldareco",
-    version=__version__,
+    version="0.2.0",
     author="Edoardo Maragliano",
     author_email="edoardo.maragliano@gmail.com",
     description="A simple package to perform Zeldovich reconstruction of density and velocity fields.",
