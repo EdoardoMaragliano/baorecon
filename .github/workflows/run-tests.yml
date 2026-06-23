@@ -1,6 +1,11 @@
-name: CI ZeldaReco
-
-on: [push, pull_request]
+name: CI baorecon
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
   test:
