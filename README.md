@@ -1,19 +1,29 @@
 
-# baorecon
+# 🌌 baorecon
 
 `baorecon` is a Python package for BAO reconstruction in cosmology. It builds density fields from tracer catalogs, solves for the displacement field, and shifts objects to reconstruct large-scale structure using the Zel'dovich approximation.
 
 [![CI Status](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml/badge.svg)](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml)
 
-## What the package does
+## ✨ Why `baorecon`?
 
-The current pipeline is organized in three layers:
+In contrast to many existing implementations, `baorecon` is designed to be **lightweight, transparent, and highly modular**, stepping away from black-box C++ wrappers:
+
+* 🐍 **100% Pure Python:** Written entirely in Python with no C++ wrapper layer or complex compilation steps required.
+* ⚡ **JIT & GPU Accelerated:** Heavy mesh operations are extremely fast thanks to `njit`-compiled CPU kernels and `numba.cuda` GPU kernels.
+* 🪶 **Lightweight Dependencies:** Relies on common, standard scientific Python packages (NumPy, SciPy) rather than specialized or heavy external frameworks.
+* 🧩 **Highly Modular API:** Provides a one-line high-level API entry point, a survey-ready YAML-driven pipeline, and a modular structure that allows you to use individual components (e.g., solvers, density managers) independently.
+* 🧮 **Multiple Solvers:** Includes both FFT-based solvers and a Multigrid backend. *(Note: The multigrid backend is semi-experimental and currently includes Jacobi smoothing as well as a V-cycle solver based on multi-color Gauss-Seidel).*
+
+## ⚙️ How it works
+
+The current pipeline is organized in three modular layers:
 
 1. `DensityManager` prepares the input catalogs, infers or normalizes box parameters, applies mass assignment, and produces the mesh overdensity field.
 2. A solver (`FFTSolverCPU`/`FFTSolverGPU`, or `MultigridSolver`) consumes the mesh field and exposes lazy `potential` and `displacement` properties.
 3. The high-level BAO orchestrator (`BAOReconstructor`, or the one-call `reconstruct_positions`) combines both steps and returns the reconstructed catalogs.
 
-The numerical core follows the Burden, Percival and Howlett (2015) IFFT reconstruction scheme or the Martin White MultiGrid scheme, with JIT-compiled kernels for the heavy mesh operations.
+The numerical core follows the [Burden, Percival & Howlett (2015)](https://arxiv.org/abs/1504.02591) IFFT reconstruction scheme or the [Martin White MultiGrid scheme](https://github.com/martinjameswhite/recon_code), with JIT-compiled kernels for the heavy mesh operations.
 
 ## Main data flow
 
