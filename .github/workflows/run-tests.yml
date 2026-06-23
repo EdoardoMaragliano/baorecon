@@ -3,10 +3,19 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+        - 'README.md'
+        - 'docs/**'       # ignora qualsiasi modifica nella cartella docs
+        - 'LICENSE'
+        - '.gitignore'
   pull_request:
     branches:
       - main
-
+    paths-ignore:
+        - 'README.md'
+        - 'docs/**'       # ignora qualsiasi modifica nella cartella docs
+        - 'LICENSE'
+        - '.gitignore'
 jobs:
   test:
     runs-on: ubuntu-latest
