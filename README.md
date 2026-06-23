@@ -1,5 +1,5 @@
 
-# Zeldareco
+# baorecon
 
 `baorecon` is a Python package for BAO reconstruction in cosmology. It builds density fields from tracer catalogs, solves for the displacement field, and shifts objects to reconstruct large-scale structure using the Zel'dovich approximation.
 
