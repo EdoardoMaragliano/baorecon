@@ -1,0 +1,3 @@
+# Documentation build (Sphinx + Read the Docs theme).
+sphinx
+sphinx-rtd-theme

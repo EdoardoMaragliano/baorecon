@@ -1,0 +1,44 @@
+name: CI ZeldaReco
+
+on: [push, pull_request]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install system dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libopenmpi-dev openmpi-bin libfftw3-dev
+
+      - name: Install dependencies
+        env:
+          MPICC: mpicc
+        run: |
+          python -m pip install --upgrade pip setuptools wheel
+
+          # Installa il plugin necessario per il flag -n
+          pip install pytest-xdist
+
+          pip install git+https://github.com/cosmodesi/pyrecon.git@mpi
+          
+          # QUESTO È IL COMANDO CHIAVE:
+          # Installa baorecon in modalità editabile e i test requirements
+          pip install -e .[test]
+          
+          # Installa il resto (runtime già gestito da install_requires di setup.py)
+          pip install -r requirements/runtime.txt
+          pip install -r requirements/test.txt
+
+      - name: Run tests
+        run: |
+          # Ora pytest troverà baorecon perché è installato nell'ambiente!
+          pytest -n auto tests/

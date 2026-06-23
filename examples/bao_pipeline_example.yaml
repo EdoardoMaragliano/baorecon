@@ -1,0 +1,95 @@
+# configuration file for BAOReconstruction pipeline
+
+########################################
+## Paths to the data and random catalogs
+########################################
+catalog:
+  data_path: "/path/to/data_catalog.fits"
+  random_path: "/path/to/random_catalog.fits"
+  data_hdu: 1
+  random_hdu: 1
+
+########################################
+## Fits columns to be read
+########################################
+columns:
+  coordinates:
+    ra: "RA"
+    dec: "DEC"
+    redshift: "REDSHIFT"
+  weights:
+    data: "WEIGHT"
+    random: "WEIGHT"
+  ids:
+    data: null
+    random: null
+  keep_cols:
+    - "RA"
+    - "DEC"
+    - "REDSHIFT"
+    - "WEIGHT"
+    
+########################################
+## Coordinate system and units
+########################################
+coordinate_system:
+  input: "ra_dec_z"
+  frame: "icrs"
+  ra_dec_unit: "deg"
+  distance_unit: "Mpc/h"
+
+#########################################
+## Cosmological parameters
+#########################################
+cosmology:
+  H0: 67.11
+  Om0: 0.3175
+  Ob0: 0.049
+  Tcmb0: 2.7255
+  name: "Planck18-like"
+
+reconstruction:
+  redshift: 0.55
+  RSDspace: "RealSpace"
+  nmesh: 256          # scalar (cubic) or [Nx, Ny, Nz] (anisotropic)
+  # cellsize: 8.0     # alternative to nmesh/boxsize: derive a multigrid-friendly
+                      # per-axis grid from a target cell size (mutually exclusive
+                      # with nmesh and boxsize)
+  boxsize: null       # scalar (cubic) or [Lx, Ly, Lz] (rectangular)
+  boxcentre: null
+  padding: 100.0
+  los: null
+  R_sm: 15.0
+  pbc: true
+  rectype: "rec-sym"
+  f: 0.88
+  bias: 1.7
+  MAS: "CIC"
+  threshold_randoms: 0.7
+  solver_type: "ifft"
+  n_iterations: 3
+  # Compute backend for the density field and "ifft" solver: "cpu" or "gpu".
+  # "gpu" requires CuPy and a CUDA-enabled GPU, and is not supported by the
+  # "multigrid" solver_type (it always runs on CPU regardless of this setting).
+  device: "cpu"
+
+masking:
+  apply_mask: false
+
+#####################################
+## Output folder for rec catalogs
+#####################################
+output:
+  folder: "/path/to/output_folder"
+  naming_pattern: "rec_{name}_{solver}_n{nmesh}_z{z0:.2f}"
+  save_metadata: true
+  # Control which artifacts to save. If omitted, defaults to ['catalogs'].
+  # Multiple options can be active at the same time by uncommenting them.
+  save:
+    - catalogs              # (Default) Reconstructed FITS catalogs.
+    # - tracer_displacements  # Adds S_X, S_Y, S_Z columns to the FITS catalogs.
+    # - grid_potential        # Scalar potential (phi) on the grid (FITS image).
+    # - grid_displacement     # Displacement field (psi) on the grid (FITS image).
+    # - reconstructor_object  # The full BAOReconstructor object (pickle file for debugging).
+
+catalog_name: "sample_survey"
