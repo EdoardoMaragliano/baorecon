@@ -86,8 +86,7 @@ Backend ↔ implementation:
 **`bench_pipeline_class.py`** benchmarks the full `ReconstructionPipeline`
 orchestrator (FITS read → RA/DEC/z→XYZ → reconstruction → XYZ→RA/DEC/z → FITS
 write) — i.e. the catalog I/O and coordinate-conversion stages that
-`bench_bao_reconstructor.py` deliberately excludes. It is **baorecon-only**
-(pyrecon has no equivalent FITS-I/O orchestrator class) and reports each stage
+`bench_bao_reconstructor.py` deliberately excludes. It is **baorecon-only** and reports each stage
 (`load` / `to_xyz` / `reconstruct` / `convert_back` / `save`) plus an end-to-end
 `total` from the progressive-release `run()`. Every configuration is swept over
 two save sets — catalogs only, and catalogs + grid potential/displacement —
