@@ -14,7 +14,7 @@ sys.path.insert(0, os.path.abspath('../..'))
 project = 'baorecon'
 copyright = '2024, Edoardo Maragliano'
 author = 'Edoardo Maragliano'
-release = '0.2.0'
+release = '0.3.0'
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
@@ -23,6 +23,7 @@ extensions = [
     'sphinx.ext.autodoc',
     'sphinx.ext.viewcode',
     'sphinx.ext.napoleon',  # For Google or NumPy style docstrings
+    'sphinx.ext.coverage',
 ]
 
 templates_path = ['_templates']
