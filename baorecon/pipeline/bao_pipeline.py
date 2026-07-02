@@ -15,6 +15,7 @@ from baorecon.io.catalog_io import Catalog
 from baorecon.io.config import CatalogConfig
 from baorecon.io.naming import NamingTokenizer
 from baorecon.utils.coordinates import create_cosmology, radec_z_to_xyz, xyz_to_radec_z
+from baorecon.utils.formatters import format_positions
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
@@ -61,6 +62,12 @@ class ReconstructionPipeline:
         self.catalog = Catalog(self.config)
         self.cosmology = create_cosmology(**self.config.cosmology)
 
+        # Single source of truth for the working precision (default float32).
+        # Coordinate arrays are cast to this and it is forwarded to the
+        # reconstructor: the coordinate helpers now preserve their input dtype,
+        # so the pipeline must own the cast rather than relying on them.
+        self.dtype = np.dtype(self.config.reconstruction.get("dtype", "float32")).type
+
         self.data_pos_radec: Optional[np.ndarray] = None
         self.random_pos_radec: Optional[np.ndarray] = None
         self.data_pos_xyz: Optional[np.ndarray] = None
@@ -99,7 +106,7 @@ class ReconstructionPipeline:
         frame = coordinate_cfg.get("frame", "icrs")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
-        self.data_pos_xyz, _ = radec_z_to_xyz(
+        data_xyz, _ = radec_z_to_xyz(
             self.data_pos_radec[:, 0],
             self.data_pos_radec[:, 1],
             self.data_pos_radec[:, 2],
@@ -108,7 +115,7 @@ class ReconstructionPipeline:
             frame=frame,
             distance_unit=distance_unit,
         )
-        self.random_pos_xyz, _ = radec_z_to_xyz(
+        random_xyz, _ = radec_z_to_xyz(
             self.random_pos_radec[:, 0],
             self.random_pos_radec[:, 1],
             self.random_pos_radec[:, 2],
@@ -117,6 +124,12 @@ class ReconstructionPipeline:
             frame=frame,
             distance_unit=distance_unit,
         )
+        # coordinates.py preserves the input dtype (float64 catalogues -> float64
+        # xyz); cast to the working precision here so the pipeline holds float32
+        # positions consistent with the reconstruction. The float64 intermediate
+        # is dropped as it goes out of scope.
+        self.data_pos_xyz = format_positions(data_xyz, dtype=self.dtype)
+        self.random_pos_xyz = format_positions(random_xyz, dtype=self.dtype)
         return self.data_pos_xyz, self.random_pos_xyz
 
 
@@ -156,7 +169,7 @@ class ReconstructionPipeline:
             f=float(reconstruction_cfg.get("f", 0.88)),
             bias=float(reconstruction_cfg.get("bias", 1.0)),
             MAS=reconstruction_cfg.get("MAS", "CIC"),
-            dtype=np.float32,
+            dtype=self.dtype,
             threshold_randoms=float(reconstruction_cfg.get("threshold_randoms", 0.7)),
             solver_type=reconstruction_cfg.get("solver_type", "ifft"),
             n_iterations=int(reconstruction_cfg.get("n_iterations", 3)),
@@ -389,6 +402,10 @@ class ReconstructionPipeline:
         # 1. I/O + coordinate conversion.
         self.load_catalogs()
         self.convert_to_xyz()
+        # Raw RA/DEC/z is only needed to build the xyz arrays; drop it now. The
+        # random catalogue in particular is a large (often float64) array.
+        self.data_pos_radec = None
+        self.random_pos_radec = None
 
         # 2. Reconstruction (builds the solver and the displacement grid).
         self.reconstruct()

@@ -135,6 +135,7 @@ def _write_config(cfg_path, data_path, random_path, out_folder,
         },
         "cosmology": {"H0": 67.11, "Om0": 0.3175, "Ob0": 0.049, "Tcmb0": 2.7255},
         "reconstruction": {
+            "dtype": "float32",
             "RSDspace": "RedshiftSpace",
             "nmesh": int(nmesh),
             "boxsize": None,
