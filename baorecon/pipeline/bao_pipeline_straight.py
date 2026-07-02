@@ -25,7 +25,6 @@ from typing import Any, Dict, Optional, Tuple
 import pickle
 
 import numpy as np
-from astropy.table import Table
 from astropy.io import fits
 
 from baorecon.reconstruction.bao_reconstructor import BAOReconstructor
@@ -255,24 +254,27 @@ class ReconstructionPipeline:
                 data_displacements = self.data_pos_xyz - self.data_rec_xyz
                 random_displacements = self.random_pos_xyz - self.random_rec_xyz
 
-            data_table = self.catalog.build_output_table(
-                is_data=True,
-                reconstructed_radec=self.data_rec_radec,
-                reconstructed_redshift=self.data_rec_z,
-                displacements=data_displacements,
-            )
-            random_table = self.catalog.build_output_table(
-                is_data=False,
-                reconstructed_radec=self.random_rec_radec,
-                reconstructed_redshift=self.random_rec_z,
-                displacements=random_displacements,
-            )
-
             if "catalogs" in save_options:
-                data_path = str(output_folder / (base_name + "_data.fits"))
-                random_path = str(output_folder / (base_name + "_random.fits"))
-                data_table.write(data_path, overwrite=True)
-                random_table.write(random_path, overwrite=True)
+                fmt = str(self.config.output.get("format", "fits")).lower()
+                ext = "parquet" if fmt == "parquet" else "fits"
+                data_path = str(output_folder / (base_name + "_data." + ext))
+                random_path = str(output_folder / (base_name + "_random." + ext))
+                self.catalog.write_output(
+                    path=data_path,
+                    is_data=True,
+                    reconstructed_radec=self.data_rec_radec,
+                    reconstructed_redshift=self.data_rec_z,
+                    displacements=data_displacements,
+                    fmt=fmt,
+                )
+                self.catalog.write_output(
+                    path=random_path,
+                    is_data=False,
+                    reconstructed_radec=self.random_rec_radec,
+                    reconstructed_redshift=self.random_rec_z,
+                    displacements=random_displacements,
+                    fmt=fmt,
+                )
                 saved_paths["data_catalog"] = data_path
                 saved_paths["random_catalog"] = random_path
                 logger.info("Saved catalogs to {0} and {1}".format(data_path, random_path))

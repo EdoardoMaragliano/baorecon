@@ -8,6 +8,9 @@ catalog:
   random_path: "/path/to/random_catalog.fits"
   data_hdu: 1
   random_hdu: 1
+  # Optional. Input format: "fits" or "parquet". If omitted it is inferred
+  # from the file extension (.fits/.fit -> fits, .parquet/.pq -> parquet).
+  # format: fits
 
 ########################################
 ## Fits columns to be read
@@ -23,6 +26,10 @@ columns:
   ids:
     data: null
     random: null
+  # Columns propagated to the output catalog. When non-empty this ALSO drives
+  # column pruning on read: only these columns (plus the coordinate/weight/id
+  # columns above) are loaded from disk, which saves I/O and RAM on large
+  # catalogs. Leave empty to read every column (legacy behaviour).
   keep_cols:
     - "RA"
     - "DEC"
@@ -82,6 +89,8 @@ masking:
 output:
   folder: "/path/to/output_folder"
   naming_pattern: "rec_{name}_{solver}_n{nmesh}_z{z0:.2f}"
+  # Output catalog format: "fits" (default) or "parquet".
+  format: fits
   save_metadata: true
   # Control which artifacts to save. If omitted, defaults to ['catalogs'].
   # Multiple options can be active at the same time by uncommenting them.
