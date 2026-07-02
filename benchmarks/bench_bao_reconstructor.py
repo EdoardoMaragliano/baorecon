@@ -54,7 +54,7 @@ import bench_common as bc
 import sys
 sys.path.insert(0, '/home/emaragliano/Work/Projects/Dottorato/baorecon')
 
-NMESH = [256,512]
+NMESH = [256,512, 1024]
 N_PARTICLES = [int(1e6)]
 N_ITERATIONS = 3
 F_GROWTH = 0.8
@@ -203,9 +203,9 @@ def run(n_particles, nmeshes, repeats, solver, mas_parallel):
                 bc.print_table(rows, title="Intermediate data")
     bc.print_table(rows, title="End-to-end pipeline")
     if bc.GPU_AVAILABLE:
-        bc.save_csv(bc.RESULTS_DIR / f"pipeline_{solver}_gpu.csv", rows, info)
+        bc.save_csv(bc.RESULTS_DIR / f"bao_reconstructor_{solver}_gpu.csv", rows, info)
     else:
-        bc.save_csv(bc.RESULTS_DIR / f"pipeline_{solver}.csv", rows, info)
+        bc.save_csv(bc.RESULTS_DIR / f"bao_reconstructor_{solver}.csv", rows, info)
     return rows
 
 

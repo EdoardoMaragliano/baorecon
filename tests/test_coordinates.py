@@ -16,109 +16,64 @@ def _angle_diff_rad(a: np.ndarray, b: np.ndarray) -> np.ndarray:
     return np.abs((a - b + np.pi) % (2.0 * np.pi) - np.pi)
 
 
-def test_radec_xyz_roundtrip_deg_mpc() -> None:
-    """Test round-trip conversion RA/DEC/z -> xyz -> RA/DEC/z in deg and Mpc."""
-    rng = np.random.RandomState(42)
-    n = 50
-    ra = rng.uniform(0.0, 360.0, n)
-    dec = rng.uniform(-80.0, 80.0, n)
-    redshift = rng.uniform(0.01, 1.0, n)
+DTYPES = [np.float32, np.float64]
+
+# Round-trip closure tolerances per working precision. float32 has ~1e-7 relative
+# machine precision, so angles (in degrees) close only to ~1e-5 -- we allow 1e-4;
+# float64 keeps the original tight bounds.
+_ROUNDTRIP_TOL = {
+    np.dtype(np.float32): {"ang": 1e-4, "z": 5e-5, "dist": 2e-3},
+    np.dtype(np.float64): {"ang": 1e-9, "z": 5e-6, "dist": 1e-6},
+}
+_CUSTOM_COSMO_TOL = {
+    np.dtype(np.float32): {"ang": 1e-4, "z": 5e-5, "dist": 2e-3},
+    np.dtype(np.float64): {"ang": 1e-9, "z": 1e-5, "dist": 1e-3},
+}
+
+
+@pytest.mark.parametrize("dtype", DTYPES)
+@pytest.mark.parametrize(
+    "ra_dec_unit, distance_unit, seed",
+    [("deg", "Mpc", 42), ("rad", "Mpc", 7), ("deg", "Mpc/h", 11)],
+)
+def test_radec_xyz_roundtrip(dtype, ra_dec_unit, distance_unit, seed) -> None:
+    """RA/DEC/z -> xyz -> RA/DEC/z closes and preserves the input dtype."""
+    rng = np.random.RandomState(seed)
+    n = 40
+    if ra_dec_unit == "deg":
+        ra = rng.uniform(0.0, 360.0, n).astype(dtype)
+        dec = rng.uniform(-80.0, 80.0, n).astype(dtype)
+        ang_diff = _angle_diff_deg
+    else:
+        ra = rng.uniform(0.0, 2.0 * np.pi, n).astype(dtype)
+        dec = rng.uniform(-0.4 * np.pi, 0.4 * np.pi, n).astype(dtype)
+        ang_diff = _angle_diff_rad
+    redshift = rng.uniform(0.02, 1.0, n).astype(dtype)
 
     xyz, dist = radec_z_to_xyz(
-        ra=ra,
-        dec=dec,
-        redshift=redshift,
-        ra_dec_unit="deg",
-        distance_unit="Mpc",
+        ra=ra, dec=dec, redshift=redshift,
+        ra_dec_unit=ra_dec_unit, distance_unit=distance_unit,
+    )
+    ra2, dec2, redshift2, dist2 = xyz_to_radec_z(
+        xyz=xyz, ra_dec_unit=ra_dec_unit, distance_unit=distance_unit,
+        z_atol=1e-8, z_max=5.0,
     )
 
-    ra2, dec2, redshift2, dist2 = xyz_to_radec_z(
-        xyz=xyz,
-        ra_dec_unit="deg",
-        distance_unit="Mpc",
-        z_atol=1e-8,
-        z_max=5.0,
-    )
+    # dtype is preserved through the whole round trip.
+    assert xyz.dtype == dtype and dist.dtype == dtype
+    assert ra2.dtype == dtype and dec2.dtype == dtype
+    assert redshift2.dtype == dtype and dist2.dtype == dtype
 
     assert xyz.shape == (n, 3)
     assert dist.shape == (n,)
     assert np.isfinite(xyz).all()
     assert np.isfinite(dist).all()
 
-    assert np.max(_angle_diff_deg(ra, ra2)) < 1e-9
-    assert np.max(np.abs(dec - dec2)) < 1e-9
-    assert np.max(np.abs(redshift - redshift2)) < 5e-6
-    assert np.max(np.abs(dist - dist2)) < 1e-6
-
-
-def test_radec_xyz_roundtrip_rad_mpc() -> None:
-    """Test round-trip conversion RA/DEC/z -> xyz -> RA/DEC/z in rad and Mpc."""
-    rng = np.random.RandomState(7)
-    n = 30
-    ra = rng.uniform(0.0, 2.0 * np.pi, n)
-    dec = rng.uniform(-0.4 * np.pi, 0.4 * np.pi, n)
-    redshift = rng.uniform(0.02, 0.8, n)
-
-    xyz, dist = radec_z_to_xyz(
-        ra=ra,
-        dec=dec,
-        redshift=redshift,
-        ra_dec_unit="rad",
-        distance_unit="Mpc",
-    )
-
-    ra2, dec2, redshift2, dist2 = xyz_to_radec_z(
-        xyz=xyz,
-        ra_dec_unit="rad",
-        distance_unit="Mpc",
-        z_atol=1e-8,
-        z_max=5.0,
-    )
-
-    assert xyz.shape == (n, 3)
-    assert dist.shape == (n,)
-    assert np.isfinite(xyz).all()
-    assert np.isfinite(dist).all()
-
-    assert np.max(_angle_diff_rad(ra, ra2)) < 1e-9
-    assert np.max(np.abs(dec - dec2)) < 1e-9
-    assert np.max(np.abs(redshift - redshift2)) < 5e-6
-    assert np.max(np.abs(dist - dist2)) < 1e-6
-
-
-def test_radec_xyz_roundtrip_deg_mpch() -> None:
-    """Test round-trip conversion RA/DEC/z -> xyz -> RA/DEC/z in deg and Mpc/h."""
-    rng = np.random.RandomState(11)
-    n = 25
-    ra = rng.uniform(0.0, 360.0, n)
-    dec = rng.uniform(-75.0, 75.0, n)
-    redshift = rng.uniform(0.03, 0.9, n)
-
-    xyz, dist = radec_z_to_xyz(
-        ra=ra,
-        dec=dec,
-        redshift=redshift,
-        ra_dec_unit="deg",
-        distance_unit="Mpc/h",
-    )
-
-    ra2, dec2, redshift2, dist2 = xyz_to_radec_z(
-        xyz=xyz,
-        ra_dec_unit="deg",
-        distance_unit="Mpc/h",
-        z_atol=1e-8,
-        z_max=5.0,
-    )
-
-    assert xyz.shape == (n, 3)
-    assert dist.shape == (n,)
-    assert np.isfinite(xyz).all()
-    assert np.isfinite(dist).all()
-
-    assert np.max(_angle_diff_deg(ra, ra2)) < 1e-9
-    assert np.max(np.abs(dec - dec2)) < 1e-9
-    assert np.max(np.abs(redshift - redshift2)) < 5e-6
-    assert np.max(np.abs(dist - dist2)) < 1e-6
+    tol = _ROUNDTRIP_TOL[np.dtype(dtype)]
+    assert np.max(ang_diff(ra, ra2)) < tol["ang"]
+    assert np.max(np.abs(dec - dec2)) < tol["ang"]
+    assert np.max(np.abs(redshift - redshift2)) < tol["z"]
+    assert np.allclose(dist, dist2, rtol=0.0, atol=tol["dist"])
 
 
 def test_radec_z_to_xyz_negative_redshift_raises() -> None:
@@ -203,28 +158,30 @@ def test_xyz_to_radec_z_invalid_distance_unit() -> None:
         xyz_to_radec_z(xyz, distance_unit="lightyear")
 
 
-def test_radec_z_to_xyz_arrays_converted_to_float64() -> None:
-    """Test that input arrays are converted to float64."""
-    ra = [10, 20]
-    dec = [5, -3]
-    redshift = [0.1, 0.2]
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_radec_z_to_xyz_preserves_dtype(dtype) -> None:
+    """radec_z_to_xyz returns arrays with the same dtype as its inputs."""
+    ra = np.array([10.0, 20.0], dtype=dtype)
+    dec = np.array([5.0, -3.0], dtype=dtype)
+    redshift = np.array([0.1, 0.2], dtype=dtype)
 
     xyz, dist = radec_z_to_xyz(ra, dec, redshift)
 
-    assert xyz.dtype == np.float64
-    assert dist.dtype == np.float64
+    assert xyz.dtype == dtype
+    assert dist.dtype == dtype
 
 
-def test_xyz_to_radec_z_returns_float64() -> None:
-    """Test that output arrays are float64."""
-    xyz = np.array([[10.0, 20.0, 30.0], [15.0, 25.0, 35.0]], dtype=np.float32)
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_xyz_to_radec_z_preserves_dtype(dtype) -> None:
+    """xyz_to_radec_z returns arrays with the same dtype as its input."""
+    xyz = np.array([[10.0, 20.0, 30.0], [15.0, 25.0, 35.0]], dtype=dtype)
 
     ra, dec, redshift, dist = xyz_to_radec_z(xyz)
 
-    assert ra.dtype == np.float64
-    assert dec.dtype == np.float64
-    assert redshift.dtype == np.float64
-    assert dist.dtype == np.float64
+    assert ra.dtype == dtype
+    assert dec.dtype == dtype
+    assert redshift.dtype == dtype
+    assert dist.dtype == dtype
 
 
 def test_create_cosmology_default() -> None:
@@ -283,35 +240,32 @@ def test_create_cosmology_invalid_Om0_too_large() -> None:
         create_cosmology(Om0=1.0)
 
 
-def test_radec_xyz_roundtrip_with_custom_cosmology() -> None:
-    """Test round-trip conversion using custom cosmology."""
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_radec_xyz_roundtrip_with_custom_cosmology(dtype) -> None:
+    """Round-trip conversion using a custom cosmology, for both precisions."""
     cosmo = create_cosmology(H0=70.0, Om0=0.3)
 
     rng = np.random.RandomState(123)
     n = 20
-    ra = rng.uniform(0.0, 360.0, n)
-    dec = rng.uniform(-80.0, 80.0, n)
-    redshift = rng.uniform(0.01, 1.0, n)
+    ra = rng.uniform(0.0, 360.0, n).astype(dtype)
+    dec = rng.uniform(-80.0, 80.0, n).astype(dtype)
+    redshift = rng.uniform(0.01, 1.0, n).astype(dtype)
 
     xyz, dist = radec_z_to_xyz(
-        ra=ra,
-        dec=dec,
-        redshift=redshift,
-        cosmo=cosmo,
-        ra_dec_unit="deg",
-        distance_unit="Mpc",
+        ra=ra, dec=dec, redshift=redshift, cosmo=cosmo,
+        ra_dec_unit="deg", distance_unit="Mpc",
     )
-
     ra2, dec2, redshift2, dist2 = xyz_to_radec_z(
-        xyz=xyz,
-        cosmo=cosmo,
-        ra_dec_unit="deg",
-        distance_unit="Mpc",
-        z_atol=1e-8,
-        z_max=5.0,
+        xyz=xyz, cosmo=cosmo, ra_dec_unit="deg", distance_unit="Mpc",
+        z_atol=1e-8, z_max=5.0,
     )
 
-    assert np.max(_angle_diff_deg(ra, ra2)) < 1e-9
-    assert np.max(np.abs(dec - dec2)) < 1e-9
-    assert np.max(np.abs(redshift - redshift2)) < 1e-5
-    assert np.max(np.abs(dist - dist2)) < 1e-3
+    assert xyz.dtype == dtype and dist.dtype == dtype
+    assert ra2.dtype == dtype and dec2.dtype == dtype
+    assert redshift2.dtype == dtype and dist2.dtype == dtype
+
+    tol = _CUSTOM_COSMO_TOL[np.dtype(dtype)]
+    assert np.max(_angle_diff_deg(ra, ra2)) < tol["ang"]
+    assert np.max(np.abs(dec - dec2)) < tol["ang"]
+    assert np.max(np.abs(redshift - redshift2)) < tol["z"]
+    assert np.allclose(dist, dist2, rtol=0.0, atol=tol["dist"])

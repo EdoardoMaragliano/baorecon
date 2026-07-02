@@ -109,7 +109,7 @@ class DensityManager:
                     "provide either cellsize, or nmesh (+optional boxsize)."
                 )
             extent = (self._raw_random_pos.max(axis=0) - self._raw_random_pos.min(axis=0)) + self.padding
-            self.nmesh, self.boxsize = nmesh_boxsize_from_cellsize(extent, self.cellsize)
+            self.nmesh, self.boxsize = nmesh_boxsize_from_cellsize(extent, self.cellsize, dtype=self.dtype)
             logger.info(f"cellsize={self.cellsize} -> nmesh={self.nmesh}, boxsize={self.boxsize}.")
         else:
             if self.nmesh is None:
@@ -117,10 +117,10 @@ class DensityManager:
             self.nmesh = format_nmesh(self.nmesh)
 
             if self.boxsize is None:
-                self.boxsize = set_boxsize_from_positions(self._raw_random_pos, padding=self.padding)
+                self.boxsize = set_boxsize_from_positions(self._raw_random_pos, padding=self.padding, dtype=self.dtype)
                 logger.info(f"Box size not provided. Set to {self.boxsize} with padding {self.padding}.")
 
-            self.boxsize = format_boxsize(self.boxsize, positions=self._raw_random_pos, pbc=self.pbc)
+            self.boxsize = format_boxsize(self.boxsize, positions=self._raw_random_pos, pbc=self.pbc, dtype=self.dtype)
 
         if self.boxcentre is None:
             self.boxcentre = set_boxcentre_from_positions(self._raw_random_pos, dtype=self.dtype)
@@ -167,19 +167,21 @@ class DensityManager:
         logger.debug("Computing overdensity field...")
         alpha = xp.sum(data_rho) / xp.sum(random_rho)
         threshold = self.threshold_randoms * random_rho.sum() / len(self.random_pos_box)
-        th_mask = random_rho > threshold
+        th_mask = random_rho <= threshold
 
         xp.multiply(random_rho, alpha, out=random_rho)
         xp.subtract(data_rho, random_rho, out=data_rho)
-        xp.putmask(random_rho, ~th_mask, 1.0)
+        xp.putmask(random_rho, th_mask, 1.0)
         xp.divide(data_rho, random_rho, out=data_rho)
-        xp.putmask(data_rho, ~th_mask, 0.0)
+        xp.putmask(data_rho, th_mask, 0.0)
 
         del random_rho
         del th_mask
 
-        if data_rho.dtype != xp.float32 or not data_rho.flags.c_contiguous:
-            data_rho = xp.ascontiguousarray(data_rho.astype(xp.float32, copy=False))
+        target_dtype = np.dtype(self.dtype)
+        if data_rho.dtype != target_dtype or not data_rho.flags.c_contiguous:
+            logger.info('casting data_rho to %s contiguous array.', target_dtype.name)
+            data_rho = xp.ascontiguousarray(data_rho.astype(target_dtype, copy=False))
 
         self._delta_on_mesh = data_rho
         return self._delta_on_mesh

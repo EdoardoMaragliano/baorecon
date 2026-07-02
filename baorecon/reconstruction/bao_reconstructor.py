@@ -16,7 +16,7 @@ from baorecon.mesh.mesh import Mesh
 from baorecon.reconstruction.density import DensityManager
 from baorecon.solvers.fft import FFTSolverCPU, FFTSolverGPU
 from baorecon.solvers.multigrid import MultigridSolver
-from baorecon.utils.formatters import format_rectype, format_rsd_space, survey_to_box_frame
+from baorecon.utils.formatters import format_positions, format_rectype, format_rsd_space, survey_to_box_frame
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
@@ -63,6 +63,7 @@ class BAOReconstructor:
         **kwargs,
     ) -> None:
         self._padding = padding
+        self._dtype = dtype
 
         # nmesh may be a scalar (cubic) or a per-axis (3,) array. When neither
         # nmesh nor cellsize is given, fall back to the historical 256^3 grid.
@@ -73,8 +74,12 @@ class BAOReconstructor:
         if f is None:
             raise ValueError("growth rate f must be provided!")
 
-        self.data_pos = np.asarray(data_pos)
-        self.random_pos = np.asarray(random_pos)
+        # Cast the (often float64) input catalogues to the working precision
+        # (float32 by default). This is the single biggest memory saving: the
+        # random catalogue is typically 10-50x larger than the data catalogue.
+        # Double precision is opt-in via ``dtype`` and propagates from here.
+        self.data_pos = format_positions(data_pos, dtype=self._dtype)
+        self.random_pos = format_positions(random_pos, dtype=self._dtype)
 
         # Normalize the LOS string once.
         self._los = None if los is None else str(los).strip().lower()
@@ -119,7 +124,6 @@ class BAOReconstructor:
         self._pbc = pbc
         self._f = f
         self._bias = bias
-        self._dtype = dtype
         self._threshold_randoms = threshold_randoms
         self._solver_type = solver_type
         self._solver_args = solver_args or {}

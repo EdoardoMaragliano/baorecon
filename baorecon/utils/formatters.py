@@ -5,7 +5,7 @@ logger = setup_logger(__name__)
 def _check_weights(weights):
     if weights.ndim != 1:
         raise ValueError("weights must be a 1D array")
-    if (weights < 0).any():
+    if weights.min() < 0:
         raise ValueError("weights must be non-negative")
 
 def format_weights(weights, size, dtype=np.float32) -> np.ndarray:
@@ -36,7 +36,38 @@ def format_weights(weights, size, dtype=np.float32) -> np.ndarray:
     else:
         _check_weights(weights)
 
-    return weights.astype(dtype)
+    return np.asarray(weights, dtype=dtype)
+
+def format_positions(positions, dtype=np.float32) -> np.ndarray:
+    """
+    Format a positions catalogue to a ``(N, 3)`` array of ``dtype``.
+
+    Converts the input to ``dtype`` (float32 by default), so float64 catalogues
+    are downcast to the working precision unless double precision is explicitly
+    requested via ``dtype``. This keeps the (often large) position arrays at the
+    intended memory footprint.
+
+    Parameters
+    ----------
+    positions : array-like
+        Array of positions of shape (N, 3).
+    dtype : data-type, optional
+        Desired data-type for the positions array. Default is np.float32.
+
+    Returns
+    -------
+    np.ndarray
+        Formatted positions array of shape (N, 3) with the specified dtype.
+
+    Raises
+    -------
+    ValueError
+        If ``positions`` does not have shape (N, 3).
+    """
+    arr = np.asarray(positions, dtype=dtype)
+    if arr.ndim != 2 or arr.shape[1] != 3:
+        raise ValueError(f"positions must have shape (N, 3). Got shape {arr.shape}.")
+    return arr
 
 def format_rectype(reconstruction_type: str) -> str:
     """
@@ -276,7 +307,7 @@ def nmesh_boxsize_from_cellsize(extent: np.ndarray, cellsize: float, dtype=np.fl
 
     nmesh = np.ceil(extent / cellsize).astype(np.int32)
     nmesh = np.array([round_to_multigrid_friendly(n) for n in nmesh], dtype=np.int32)
-    boxsize = (nmesh.astype(np.float64) * cellsize).astype(dtype)
+    boxsize = (nmesh.astype(dtype) * cellsize).astype(dtype)
 
     logger.info(
         "Derived grid from cellsize=%.6g: nmesh=%s (multigrid-friendly), boxsize=%s (extent=%s)",
@@ -311,7 +342,7 @@ def check_boxsize(box_size: np.ndarray, positions: np.ndarray) -> bool:
         return False
     return True
     
-def format_boxsize(boxsize, positions: np.ndarray, pbc: bool) -> np.ndarray:
+def format_boxsize(boxsize, positions: np.ndarray, pbc: bool, dtype=np.float32) -> np.ndarray:
     """
     Normalize the box size to a per-axis array of shape (3,) and validate it.
 
@@ -327,6 +358,8 @@ def format_boxsize(boxsize, positions: np.ndarray, pbc: bool) -> np.ndarray:
     pbc : bool
         Whether periodic boundary conditions are applied. If True, the box size
         is not checked against positions.
+    dtype : data-type, optional
+        Desired data-type for the box size array. Default is np.float32.
 
     Returns
     -------
@@ -338,9 +371,9 @@ def format_boxsize(boxsize, positions: np.ndarray, pbc: bool) -> np.ndarray:
     ValueError
         If the box size has a bad shape, or is too small to contain the positions.
     """
-    arr = np.asarray(boxsize, dtype=np.float32)
+    arr = np.asarray(boxsize, dtype=dtype)
     if arr.ndim == 0:
-        box = np.full(3, float(arr), dtype=np.float32)
+        box = np.full(3, float(arr), dtype=dtype)
     elif arr.shape == (3,):
         box = arr
     else:
@@ -354,7 +387,7 @@ def format_boxsize(boxsize, positions: np.ndarray, pbc: bool) -> np.ndarray:
             )
     return box
 
-def set_boxsize_from_positions(positions: np.ndarray, padding: float) -> np.ndarray:
+def set_boxsize_from_positions(positions: np.ndarray, padding: float, dtype=np.float32) -> np.ndarray:
     """
     Set the per-axis box size from the position extent, with optional padding.
 
@@ -364,6 +397,8 @@ def set_boxsize_from_positions(positions: np.ndarray, padding: float) -> np.ndar
         Array of positions to determine the box size.
     padding : float, optional
         Additional padding added to every axis.
+    dtype : data-type, optional
+        Desired data-type for the box size array. Default is np.float32.
 
     Returns
     -------
@@ -371,7 +406,7 @@ def set_boxsize_from_positions(positions: np.ndarray, padding: float) -> np.ndar
         The computed per-axis box size, shape (3,).
     """
     max_sep = positions.max(axis=0) - positions.min(axis=0)
-    box_size = (max_sep + padding).astype(np.float32)
+    box_size = (max_sep + padding).astype(dtype)
     logger.info(
         f"Setting box size to {np.array2string(box_size, precision=4, separator=', ')} "
         f"based on per-axis separation in positions with padding {padding}."
@@ -428,18 +463,18 @@ def survey_to_box_frame(positions: np.ndarray, min_corner: np.ndarray, boxsize: 
     ValueError
         If positions are outside [0, boxsize] when pbc=False.
     """
-    pos = np.asarray(positions, dtype=dtype)
-    pos_shifted = pos - min_corner
+    pos_shifted = np.array(positions, dtype=dtype, copy=True)
+    np.subtract(pos_shifted, min_corner, out=pos_shifted)
     if pbc:
-        pos_shifted = np.mod(pos_shifted, boxsize)
+        np.mod(pos_shifted, boxsize, out=pos_shifted)
     else:
         # validate bounds
-        if (pos_shifted < 0).any() or (pos_shifted > boxsize).any():
+        if pos_shifted.min() < 0 or (pos_shifted.max(axis=0) > boxsize).any():
             raise ValueError(
                 f"Positions in box frame must be inside [0, boxsize] when pbc=False. "
                 f"Got min {pos_shifted.min()}, max {pos_shifted.max()}, boxsize {boxsize}."
             )
-    return pos_shifted.astype(dtype)
+    return pos_shifted
 
 def format_padding(padding:float, pbc: bool) -> float:
     """

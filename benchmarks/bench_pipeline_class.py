@@ -74,7 +74,7 @@ import bench_common as bc
 import sys
 sys.path.insert(0, '/home/emaragliano/Work/Projects/Dottorato/baorecon')
 
-NMESH = [256, 512]
+NMESH = [256, 512, 1024]
 N_PARTICLES = [int(1e6)]
 N_ITERATIONS = 3
 F_GROWTH = 0.8
