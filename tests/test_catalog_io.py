@@ -65,15 +65,20 @@ def test_catalog_load_and_extraction(mock_catalogs_setup):
     config, t_data, t_random = mock_catalogs_setup
 
     catalog = Catalog(config)
-    d_pos, d_w, d_ids, r_pos, r_w, r_ids = catalog.get_positions_weights_ids()
+    (
+        d_ra, d_dec, d_z, d_w, d_ids,
+        r_ra, r_dec, r_z, r_w, r_ids,
+    ) = catalog.get_positions_weights_ids()
 
-    assert d_pos.shape == (100, 3)
-    assert r_pos.shape == (200, 3)
+    assert d_ra.shape == (100,)
+    assert d_dec.shape == (100,)
+    assert d_z.shape == (100,)
+    assert r_ra.shape == (200,)
     assert len(d_w) == 100
     assert len(r_w) == 200
 
-    assert np.isclose(d_pos[0, 0], t_data["RA"][0])
-    assert np.isclose(r_pos[0, 1], t_random["DEC"][0])
+    assert np.isclose(d_ra[0], t_data["RA"][0])
+    assert np.isclose(r_dec[0], t_random["DEC"][0])
 
 
 def test_catalog_apply_mask(mock_catalogs_setup):
@@ -155,10 +160,13 @@ def test_parquet_roundtrip(tmp_path):
 
     config = DummyConfig(data_fpath, random_fpath)
     catalog = Catalog(config)
-    d_pos, d_w, d_ids, r_pos, r_w, r_ids = catalog.get_positions_weights_ids()
+    (
+        d_ra, d_dec, d_z, d_w, d_ids,
+        r_ra, r_dec, r_z, r_w, r_ids,
+    ) = catalog.get_positions_weights_ids()
 
-    assert d_pos.shape == (100, 3)
-    assert r_pos.shape == (200, 3)
+    assert d_ra.shape == (100,)
+    assert r_ra.shape == (200,)
 
 
 def test_fits_parquet_parity(tmp_path):
