@@ -1,54 +1,6 @@
 """End-to-end ``ReconstructionPipeline`` (orchestrator) benchmark.
 
-While ``bench_pipeline.py`` times only ``BAOReconstructor.run_reconstruction``
-(density contrast + iterative FFT solve + shifting), this script benchmarks the
-full :class:`baorecon.pipeline.ReconstructionPipeline` *class* -- i.e. the
-parts the reconstructor benchmark deliberately excludes:
-
-* FITS catalogue read from disk,
-* RA/DEC/z -> Cartesian conversion,
-* the reconstruction itself,
-* Cartesian -> RA/DEC/z conversion,
-* FITS catalogue / grid writing.
-
-Each configuration is measured **per stage** plus an end-to-end ``total``:
-
-    load  ->  to_xyz  ->  reconstruct  ->  convert_back  ->  save  ->  total
-
-The per-stage rows use the granular pipeline methods (``load_catalogs``,
-``convert_to_xyz``, ``reconstruct``, ``convert_back``, ``save_outputs``); the
-``total`` row times the progressive-memory-release ``run()``.
-
-Why per-stage matters on the GPU: ``run()`` releases the solver/delta grids
-mid-run (``_release_reconstruction_grids`` calls ``cp...free_all_blocks()``), so
-the CuPy-pool delta measured *after* ``run()`` returns under-reports the true
-peak. The ``reconstruct`` stage, measured in isolation, captures the grids while
-they are still resident -- read GPU peak memory from that row, not from
-``total``.
-
-Save sets are swept so the cost of writing grids (and, on the GPU, the
-CuPy -> host displacement conversion in ``_save_grids``) is visible:
-
-* ``cat``   -- ``save: [catalogs]`` (reconstructed FITS catalogues only),
-* ``grids`` -- ``save: [catalogs, grid_potential, grid_displacement]``.
-
-Backends: ``baorecon_cpu`` / ``baorecon_gpu`` only. pyrecon has no equivalent
-FITS-I/O orchestrator class; its reconstruction core is already compared in
-``bench_pipeline.py``.
-
-All inputs are synthetic: a uniform RA/DEC/z sky patch (``bench_common`` mock) is
-written to temporary FITS catalogues with a generated YAML config; everything is
-cleaned up afterwards. Particle count is swept over 1e6; mesh over 256/512.
-
-Each ``(backend, nmesh, save_set)`` configuration runs in its own subprocess (see
-``bench_common.spawn_worker``) so that ``ru_maxrss`` / the CuPy pool measure one
-configuration's peak memory in isolation. The parent only launches workers and
-aggregates their JSON output; it never imports baorecon.
-
-Run::
-
-    python benchmarks/bench_pipeline_class.py
-    python benchmarks/bench_pipeline_class.py --quick
+Modificato per isolare completamente il calcolo 'total' in un sottoprocesso dedicato.
 """
 from __future__ import annotations
 
@@ -166,7 +118,7 @@ def _write_config(cfg_path, data_path, random_path, out_folder,
         yaml.safe_dump(config, handle, sort_keys=False)
 
 
-def _worker_baorecon(n, nmesh, device, repeats, solver, save_label):
+def _worker_baorecon(n, nmesh, device, repeats, solver, save_label, mode):
     from baorecon.pipeline import ReconstructionPipeline
 
     backend = f"baorecon_{device}_{save_label}"
@@ -179,46 +131,41 @@ def _worker_baorecon(n, nmesh, device, repeats, solver, save_label):
         cfg_path = os.path.join(workdir, "config.yaml")
         out_folder = os.path.join(workdir, "out")
 
-        # Build the synthetic catalogues + config *before* the memory baseline so
-        # neither the mock arrays nor the FITS write inflate the per-stage deltas.
         _write_mock_catalog(data_path, n, seed=SEED_DATA)
         _write_mock_catalog(random_path, n, seed=SEED_RANDOM)
         _write_config(cfg_path, data_path, random_path, out_folder,
                       nmesh, solver, device, save_list)
 
         bc.reset_memory_baseline()
-
-        pipeline = ReconstructionPipeline(config_file=cfg_path)
-
-        # Per-stage: granular methods on the shared pipeline. Each method auto-
-        # fills its prerequisites, so re-running it across measure() repeats is
-        # safe (it recomputes that stage only).
-        stage_fns = {
-            "load": pipeline.load_catalogs,
-            "to_xyz": pipeline.convert_to_xyz,
-            "reconstruct": pipeline.reconstruct,
-            "convert_back": pipeline.convert_back,
-            "save": pipeline.save_outputs,
-        }
-
         rows = []
-        for stage in PIPELINE_STAGES:
-            m = bc.safe_measure(stage_fns[stage],
-                                label=f"{backend} {stage} nmesh={nmesh}",
+
+        # MODIFICA ARCHITETTURALE: Esecuzione condizionale in base al 'mode' del sottoprocesso
+        if mode == "stages":
+            pipeline = ReconstructionPipeline(config_file=cfg_path)
+
+            stage_fns = {
+                "load": pipeline.load_catalogs,
+                "to_xyz": pipeline.convert_to_xyz,
+                "reconstruct": pipeline.reconstruct,
+                "convert_back": pipeline.convert_back,
+                "save": pipeline.save_outputs,
+            }
+
+            for stage in PIPELINE_STAGES:
+                m = bc.safe_measure(stage_fns[stage],
+                                    label=f"{backend} {stage} nmesh={nmesh}",
+                                    repeats=repeats, device=device)
+                if m is not None:
+                    rows.append(m.as_row(backend, n, nmesh, stage))
+
+        elif mode == "total":
+            def total():
+                return ReconstructionPipeline(config_file=cfg_path).run()
+
+            m = bc.safe_measure(total, label=f"{backend} total nmesh={nmesh}",
                                 repeats=repeats, device=device)
             if m is not None:
-                rows.append(m.as_row(backend, n, nmesh, stage))
-
-        # End-to-end: a fresh pipeline timed through the progressive-release
-        # run(). On GPU its memory delta under-reports the peak (grids freed
-        # internally) -- read GPU peak from the `reconstruct` row instead.
-        def total():
-            return ReconstructionPipeline(config_file=cfg_path).run()
-
-        m = bc.safe_measure(total, label=f"{backend} total nmesh={nmesh}",
-                            repeats=repeats, device=device)
-        if m is not None:
-            rows.append(m.as_row(backend, n, nmesh, "total"))
+                rows.append(m.as_row(backend, n, nmesh, "total"))
 
         return rows
     finally:
@@ -232,9 +179,10 @@ def worker(spec):
     repeats = int(spec["repeats"])
     solver = str(spec["solver"])
     save_label = str(spec["save_set"])
+    mode = str(spec["mode"]) # Recupera il task assegnato al sottoprocesso
 
     device = "gpu" if backend.endswith("gpu") else "cpu"
-    return _worker_baorecon(n, nmesh, device, repeats, solver, save_label)
+    return _worker_baorecon(n, nmesh, device, repeats, solver, save_label, mode)
 
 
 # ---------------------------------------------------------------------------
@@ -258,12 +206,27 @@ def run(n_particles, nmeshes, repeats, solver):
             for device in devices:
                 for save_label in SAVE_SETS:
                     backend = f"baorecon_{device}"
-                    label = f"{backend}_{save_label} N={n:.0e} nmesh={nmesh}"
-                    print(f"backend: {backend} save={save_label}")
-                    spec = {"backend": backend, "n_particles": n, "nmesh": nmesh,
-                            "repeats": repeats, "solver": solver,
-                            "save_set": save_label}
-                    rows.extend(bc.spawn_worker(__file__, spec, label=label))
+                    
+                    # 1. Spawn del Sottoprocesso per gli Step Granulari
+                    label_stages = f"{backend}_{save_label} N={n:.0e} nmesh={nmesh} (Stages)"
+                    print(f"backend: {backend} save={save_label} -> Esecuzione Stage...")
+                    spec_stages = {
+                        "backend": backend, "n_particles": n, "nmesh": nmesh,
+                        "repeats": repeats, "solver": solver, "save_set": save_label,
+                        "mode": "stages"
+                    }
+                    rows.extend(bc.spawn_worker(__file__, spec_stages, label=label_stages))
+                    
+                    # 2. Spawn di un NUOVO Sottoprocesso Vergine solo per la fase 'Total'
+                    label_total = f"{backend}_{save_label} N={n:.0e} nmesh={nmesh} (Total)"
+                    print(f"backend: {backend} save={save_label} -> Esecuzione Total Isolato...")
+                    spec_total = {
+                        "backend": backend, "n_particles": n, "nmesh": nmesh,
+                        "repeats": repeats, "solver": solver, "save_set": save_label,
+                        "mode": "total"
+                    }
+                    rows.extend(bc.spawn_worker(__file__, spec_total, label=label_total))
+                    
                     bc.print_table(rows, title="Intermediate data")
 
     bc.print_table(rows, title="Pipeline class (per-stage + total)")
