@@ -112,10 +112,14 @@ def radec_z_to_xyz(
     if cosmo is None:
         cosmo = Planck18
     
+    dt = ra.dtype
+    one = dt.type(1.0)
+    h = dt.type(cosmo.h)
+    
     # Compute distances
     dist_mpc = comoving_distance(z_arr, cosmo)
-    xyz_scale = cosmo.h if distance_unit == "Mpc/h" else 1.0
-    dist_out = dist_mpc * (cosmo.h if distance_unit == "Mpc/h" else 1.0)
+    xyz_scale = h if distance_unit == "Mpc/h" else one
+    dist_out = dist_mpc * (h if distance_unit == "Mpc/h" else one)
 
     # Convert to radians
     if ra_dec_unit == "deg":
@@ -173,8 +177,12 @@ def xyz_to_radec_z(
     if cosmo is None:
         cosmo = Planck18
 
+    dt = xyz_arr.dtype
+    one = dt.type(1.0)
+    h = dt.type(cosmo.h)
+
     # Scale for the spherical computation
-    xyz_scale = 1.0 / cosmo.h if distance_unit == "Mpc/h" else 1.0
+    xyz_scale = one / h if distance_unit == "Mpc/h" else one
     x, y, zc = xyz_arr[:, 0] * xyz_scale, xyz_arr[:, 1] * xyz_scale, xyz_arr[:, 2] * xyz_scale
 
     # Compute spherical coordinates
@@ -185,13 +193,15 @@ def xyz_to_radec_z(
     lat = np.arcsin(zc / dist_mpc)
 
     if ra_dec_unit == "deg":
-        ra = np.degrees(lon) % 360
+        c_360 = dt.type(360.0)
+        ra = np.degrees(lon) % c_360
         dec = np.degrees(lat)
     else:
-        ra = lon % (2 * np.pi)
+        c_2pi = dt.type(2.0 * np.pi)
+        ra = lon % c_2pi
         dec = lat
 
-    dist_out = dist_mpc * (cosmo.h if distance_unit == "Mpc/h" else 1.0)
+    dist_out = dist_mpc * (h if distance_unit == "Mpc/h" else one)
 
     # Redshift interpolation
     redshift = distance_to_redshift(dist_mpc, cosmo)
