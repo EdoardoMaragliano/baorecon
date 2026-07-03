@@ -4,6 +4,7 @@ import pytest
 import yaml
 from pathlib import Path
 import numpy as np
+import pandas as pd
 from astropy.table import Table
 
 from baorecon.pipeline.bao_pipeline import ReconstructionPipeline
@@ -12,6 +13,14 @@ from baorecon.utils.backend import CUPY_AVAILABLE
 # Marker to skip GPU tests if CUDA is not available
 gpu_test = pytest.mark.skipif(not CUPY_AVAILABLE, reason="GPU not available or CuPy not installed")
 DEVICES = ["cpu", pytest.param("gpu", marks=gpu_test)]
+
+
+def _catalog_columns(path_str):
+    """Return the column names of a saved catalog (FITS or Parquet)."""
+    path = Path(path_str)
+    if path.suffix == ".parquet":
+        return set(pd.read_parquet(path).columns)
+    return set(Table.read(path).colnames)
 
 
 @pytest.fixture(scope="module")
@@ -35,10 +44,16 @@ def dummy_catalogs(tmp_path_factory):
     return str(data_path), str(random_path)
 
 
+@pytest.fixture(scope="module", params=["fits", "parquet"])
+def output_format(request):
+    """Exercise both on-disk catalog output formats."""
+    return request.param
+
+
 @pytest.fixture(scope="module", params=DEVICES)
-def test_config_all_outputs(request, tmp_path_factory, dummy_catalogs):
+def test_config_all_outputs(request, tmp_path_factory, dummy_catalogs, output_format):
     """Create a YAML config file that enables all save options, for both
-    the 'cpu' and 'gpu' compute backends."""
+    the 'cpu' and 'gpu' compute backends and both output formats."""
     device = request.param
     tmp_path = tmp_path_factory.mktemp("config")
     data_path, random_path = dummy_catalogs
@@ -69,7 +84,8 @@ def test_config_all_outputs(request, tmp_path_factory, dummy_catalogs):
         },
         "output": {
             "folder": str(output_dir),
-            "naming_pattern": f"test_run_{device}",
+            "naming_pattern": f"test_run_{device}_{output_format}",
+            "format": output_format,
             "save_metadata": True,
             "save": [
                 "catalogs",
@@ -115,12 +131,12 @@ def test_pipeline_saves_all_outputs(test_config_all_outputs):
         assert path.stat().st_size > 0, f"File for '{key}' is empty: {path}"
 
     # 3. Deeper check for 'tracer_displacements' option
-    # The output FITS catalog should contain the displacement vector columns.
-    data_table = Table.read(saved_files["data_catalog"])
+    # The output catalog (FITS or Parquet) should contain the displacement columns.
     expected_displacement_cols = {"S_X", "S_Y", "S_Z"}
+    data_cols = _catalog_columns(saved_files["data_catalog"])
     assert expected_displacement_cols.issubset(
-        data_table.colnames
+        data_cols
     ), "Displacement columns S_X, S_Y, S_Z not found in output catalog."
 
-    random_table = Table.read(saved_files["random_catalog"])
-    assert expected_displacement_cols.issubset(random_table.colnames)
+    random_cols = _catalog_columns(saved_files["random_catalog"])
+    assert expected_displacement_cols.issubset(random_cols)
