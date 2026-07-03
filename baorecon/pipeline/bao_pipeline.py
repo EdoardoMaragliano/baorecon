@@ -8,7 +8,6 @@ from typing import Any, Dict, Optional, Tuple
 import pickle
 
 import numpy as np
-from astropy.table import Table
 from astropy.io import fits
 
 from baorecon.reconstruction.bao_reconstructor import BAOReconstructor
@@ -16,6 +15,7 @@ from baorecon.io.catalog_io import Catalog
 from baorecon.io.config import CatalogConfig
 from baorecon.io.naming import NamingTokenizer
 from baorecon.utils.coordinates import create_cosmology, radec_z_to_xyz, xyz_to_radec_z
+from baorecon.utils.formatters import format_positions
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
@@ -62,8 +62,18 @@ class ReconstructionPipeline:
         self.catalog = Catalog(self.config)
         self.cosmology = create_cosmology(**self.config.cosmology)
 
-        self.data_pos_radec: Optional[np.ndarray] = None
-        self.random_pos_radec: Optional[np.ndarray] = None
+        # Single source of truth for the working precision (default float32).
+        # Coordinate arrays are cast to this and it is forwarded to the
+        # reconstructor: the coordinate helpers now preserve their input dtype,
+        # so the pipeline must own the cast rather than relying on them.
+        self.dtype = np.dtype(self.config.reconstruction.get("dtype", "float32")).type
+
+        self.data_pos_ra: Optional[np.ndarray] = None
+        self.data_pos_dec: Optional[np.ndarray] = None
+        self.data_pos_z: Optional[np.ndarray] = None
+        self.random_pos_ra: Optional[np.ndarray] = None
+        self.random_pos_dec: Optional[np.ndarray] = None
+        self.random_pos_z: Optional[np.ndarray] = None
         self.data_pos_xyz: Optional[np.ndarray] = None
         self.random_pos_xyz: Optional[np.ndarray] = None
         self.data_weights: Optional[np.ndarray] = None
@@ -73,8 +83,10 @@ class ReconstructionPipeline:
         self.reconstructor: Optional[BAOReconstructor] = None
         self.data_rec_xyz: Optional[np.ndarray] = None
         self.random_rec_xyz: Optional[np.ndarray] = None
-        self.data_rec_radec: Optional[np.ndarray] = None
-        self.random_rec_radec: Optional[np.ndarray] = None
+        self.data_rec_ra: Optional[np.ndarray] = None
+        self.data_rec_dec: Optional[np.ndarray] = None
+        self.random_rec_ra: Optional[np.ndarray] = None
+        self.random_rec_dec: Optional[np.ndarray] = None
         self.data_rec_z: Optional[np.ndarray] = None
         self.random_rec_z: Optional[np.ndarray] = None
 
@@ -82,17 +94,21 @@ class ReconstructionPipeline:
         """Load input FITS catalogs and extract raw arrays."""
         self.catalog.load()
         (
-            self.data_pos_radec,
+            self.data_pos_ra,
+            self.data_pos_dec, 
+            self.data_pos_z,
             self.data_weights,
             self.data_ids,
-            self.random_pos_radec,
+            self.random_pos_ra, 
+            self.random_pos_dec, 
+            self.random_pos_z,
             self.random_weights,
             self.random_ids,
-        ) = self.catalog.get_positions_weights_ids()
+        ) = self.catalog.get_positions_weights_ids(target_dtype=self.dtype)
 
     def convert_to_xyz(self) -> Tuple[np.ndarray, np.ndarray]:
         """Convert RA/DEC/redshift coordinates to Cartesian coordinates."""
-        if self.data_pos_radec is None or self.random_pos_radec is None:
+        if self.data_pos_ra is None or self.random_pos_ra is None:
             self.load_catalogs()
 
         coordinate_cfg = self.config.coordinate_system
@@ -100,24 +116,33 @@ class ReconstructionPipeline:
         frame = coordinate_cfg.get("frame", "icrs")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
-        self.data_pos_xyz, _ = radec_z_to_xyz(
-            self.data_pos_radec[:, 0],
-            self.data_pos_radec[:, 1],
-            self.data_pos_radec[:, 2],
+        data_xyz, _ = radec_z_to_xyz(
+            self.data_pos_ra,
+            self.data_pos_dec,
+            self.data_pos_z,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
             frame=frame,
             distance_unit=distance_unit,
         )
-        self.random_pos_xyz, _ = radec_z_to_xyz(
-            self.random_pos_radec[:, 0],
-            self.random_pos_radec[:, 1],
-            self.random_pos_radec[:, 2],
+        random_xyz, _ = radec_z_to_xyz(
+            self.random_pos_ra,
+            self.random_pos_dec,
+            self.random_pos_z,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
             frame=frame,
             distance_unit=distance_unit,
         )
+        # Positions are already loaded at the working precision (self.dtype) and
+        # coordinates.py preserves it, so format_positions just validates shape.
+        # Drop the raw RA/DEC/z now -- only needed to build the xyz arrays (the
+        # random catalogue is the large one).
+        self.data_pos_ra = self.data_pos_dec = self.data_pos_z = None
+        self.random_pos_ra = self.random_pos_dec = self.random_pos_z = None
+
+        self.data_pos_xyz = format_positions(data_xyz, dtype=self.dtype)
+        self.random_pos_xyz = format_positions(random_xyz, dtype=self.dtype)
         return self.data_pos_xyz, self.random_pos_xyz
 
 
@@ -157,7 +182,7 @@ class ReconstructionPipeline:
             f=float(reconstruction_cfg.get("f", 0.88)),
             bias=float(reconstruction_cfg.get("bias", 1.0)),
             MAS=reconstruction_cfg.get("MAS", "CIC"),
-            dtype=np.float32,
+            dtype=self.dtype,
             threshold_randoms=float(reconstruction_cfg.get("threshold_randoms", 0.7)),
             solver_type=reconstruction_cfg.get("solver_type", "ifft"),
             n_iterations=int(reconstruction_cfg.get("n_iterations", 3)),
@@ -175,8 +200,12 @@ class ReconstructionPipeline:
         self.data_rec_xyz, self.random_rec_xyz = self.reconstructor.run_reconstruction()
         return self.data_rec_xyz, self.random_rec_xyz
 
-    def convert_back(self) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-        """Convert reconstructed XYZ coordinates back to RA/DEC/redshift."""
+    def convert_back(self) -> Tuple[np.ndarray, ...]:
+        """Convert reconstructed XYZ coordinates back to RA/DEC/redshift.
+
+        RA and DEC are kept as separate 1D arrays (not stacked into an (N, 2)),
+        so the large random catalogue avoids an extra full-size allocation.
+        """
         if self.data_rec_xyz is None or self.random_rec_xyz is None:
             self.reconstruct()
 
@@ -186,26 +215,27 @@ class ReconstructionPipeline:
         frame = coordinate_cfg.get("frame", "icrs")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
-        data_ra, data_dec, self.data_rec_z, _ = xyz_to_radec_z(
+        self.data_rec_ra, self.data_rec_dec, self.data_rec_z, _ = xyz_to_radec_z(
             self.data_rec_xyz,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
             frame=frame,
             distance_unit=distance_unit,
         )
-        self.data_rec_radec = np.column_stack((data_ra, data_dec))
 
-        random_ra, random_dec, self.random_rec_z, _ = xyz_to_radec_z(
+        self.random_rec_ra, self.random_rec_dec, self.random_rec_z, _ = xyz_to_radec_z(
             self.random_rec_xyz,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
             frame=frame,
             distance_unit=distance_unit,
         )
-        self.random_rec_radec = np.column_stack((random_ra, random_dec))
 
         logger.info("Conversion complete.")
-        return self.data_rec_radec, self.random_rec_radec, self.data_rec_z, self.random_rec_z
+        return (
+            self.data_rec_ra, self.data_rec_dec, self.data_rec_z,
+            self.random_rec_ra, self.random_rec_dec, self.random_rec_z,
+        )
 
     def apply_mask(self, data_mask: Optional[np.ndarray] = None, random_mask: Optional[np.ndarray] = None) -> None:
         """Apply boolean masks while keeping IDs aligned to the filtered catalogues."""
@@ -237,33 +267,65 @@ class ReconstructionPipeline:
     def _save_grids(self, output_folder: Path, base_name: str, save_options: set) -> Dict[str, str]:
         """Save the grid potential/displacement and the pickled reconstructor.
 
-        Called right after :meth:`reconstruct` so the heavy solver fields can be
-        released immediately afterwards. On the GPU path the displacement grid is
-        a CuPy array, so it is moved to host before being written to FITS.
+        Each grid is copied to host, written, and its host copy released before
+        the next (larger) grid is converted -- so the potential and displacement
+        host copies are never held at once. On the GPU path the device grid is
+        also dropped once it is on disk (freeing the pool), so the device
+        potential is gone before the 3x-larger displacement host copy is made.
+        Both are skipped when ``reconstructor_object`` is requested, since the
+        pickle serialises the solver with its grids intact.
         """
         saved_paths: Dict[str, str] = {}
+        solver = self.reconstructor.solver if self.reconstructor is not None else None
+        keep_grids = "reconstructor_object" in save_options
+        on_gpu = self.config.reconstruction.get("device", "cpu") == "gpu"
 
         def _save_fits_image(data: np.ndarray, suffix: str) -> str:
             path = str(output_folder / (base_name + suffix))
-            fits.writeto(path, _to_host(data), overwrite=True, output_verify="silentfix")
+            host = _to_host(data)  # device -> host copy on the GPU path
+            fits.writeto(path, host, overwrite=True, output_verify="silentfix")
+            del host  # release the host copy before the next grid is converted
             logger.info("Saved FITS image to {0}".format(path))
             return path
 
+        def _drop_device_grid(attr: str, still_needed: bool = False) -> None:
+            """Drop the solver's reference to a saved grid and reclaim its memory."""
+            if keep_grids or still_needed or solver is None:
+                return
+            setattr(solver, attr, None)
+            if on_gpu:
+                try:
+                    import cupy as cp
+
+                    cp.get_default_memory_pool().free_all_blocks()
+                except ImportError:
+                    pass
+
         if "grid_potential" in save_options:
-            assert self.reconstructor is not None and self.reconstructor.solver is not None
-            potential = self.reconstructor.solver.potential
+            assert solver is not None
+            potential = solver.potential
             if potential is not None:
                 saved_paths["grid_potential"] = _save_fits_image(potential, "_potential.fits")
             else:
                 logger.warning("Potential not computed or available in solver. Skipping save.")
+            del potential
+            # The potential is only still needed if a displacement save is pending
+            # and the displacement has not been computed yet.
+            still_needed = (
+                "grid_displacement" in save_options
+                and getattr(solver, "_displacement", None) is None
+            )
+            _drop_device_grid("_potential", still_needed=still_needed)
 
         if "grid_displacement" in save_options:
-            assert self.reconstructor is not None and self.reconstructor.solver is not None
-            displacement = self.reconstructor.solver.displacement
+            assert solver is not None
+            displacement = solver.displacement
             if displacement is not None:
                 saved_paths["grid_displacement"] = _save_fits_image(displacement, "_displacement.fits")
             else:
                 logger.warning("Displacement not computed or available in solver. Skipping save.")
+            del displacement
+            _drop_device_grid("_displacement")
 
         if "reconstructor_object" in save_options:
             path = str(output_folder / (base_name + "_reconstructor.pkl"))
@@ -274,48 +336,68 @@ class ReconstructionPipeline:
 
         return saved_paths
 
-    def _save_catalogs(self, output_folder: Path, base_name: str, save_options: set) -> Dict[str, str]:
-        """Save the reconstructed FITS catalogues.
+    def _save_catalogs(
+        self, output_folder: Path, base_name: str, save_options: set, release: bool = False
+    ) -> Dict[str, str]:
+        """Save the reconstructed catalogues, one tracer type at a time.
 
-        Tracer displacements, when requested, are computed here from the initial
-        and reconstructed Cartesian positions (s = x_initial - x_reconstructed),
-        which are host arrays even on the GPU path.
+        Data then randoms are processed sequentially: each catalogue's tracer
+        displacement (``s = x_initial - x_reconstructed``, when requested) is
+        computed, written, and -- when ``release`` is set -- its position arrays
+        are dropped, before moving to the next. This keeps the two catalogues'
+        transients from being live at once.
+        ``release`` is used by :meth:`run`; :meth:`save_outputs` leaves it False
+        so its step-by-step callers keep their intermediates.
         """
         saved_paths: Dict[str, str] = {}
-        if "catalogs" not in save_options and "tracer_displacements" not in save_options:
+        want_catalogs = "catalogs" in save_options
+        want_displacements = "tracer_displacements" in save_options
+        if not want_catalogs and not want_displacements:
             return saved_paths
 
-        data_displacements = None
-        random_displacements = None
-        if "tracer_displacements" in save_options:
-            assert self.data_pos_xyz is not None and self.data_rec_xyz is not None
-            assert self.random_pos_xyz is not None and self.random_rec_xyz is not None
-            logger.info("Calculating tracer displacements from initial and reconstructed positions.")
-            data_displacements = self.data_pos_xyz - self.data_rec_xyz
-            random_displacements = self.random_pos_xyz - self.random_rec_xyz
+        fmt = str(self.config.output.get("format", "fits")).lower()
+        ext = "parquet" if fmt == "parquet" else "fits"
 
-        data_table = self.catalog.build_output_table(
-            is_data=True,
-            reconstructed_radec=self.data_rec_radec,
-            reconstructed_redshift=self.data_rec_z,
-            displacements=data_displacements,
-        )
-        random_table = self.catalog.build_output_table(
-            is_data=False,
-            reconstructed_radec=self.random_rec_radec,
-            reconstructed_redshift=self.random_rec_z,
-            displacements=random_displacements,
-        )
+        def _process(is_data: bool) -> None:
+            pos_xyz = self.data_pos_xyz if is_data else self.random_pos_xyz
+            rec_xyz = self.data_rec_xyz if is_data else self.random_rec_xyz
+            rec_ra = self.data_rec_ra if is_data else self.random_rec_ra
+            rec_dec = self.data_rec_dec if is_data else self.random_rec_dec
+            rec_z = self.data_rec_z if is_data else self.random_rec_z
+            label = "data" if is_data else "random"
 
-        if "catalogs" in save_options:
-            data_path = str(output_folder / (base_name + "_data.fits"))
-            random_path = str(output_folder / (base_name + "_random.fits"))
-            data_table.write(data_path, overwrite=True)
-            random_table.write(random_path, overwrite=True)
-            saved_paths["data_catalog"] = data_path
-            saved_paths["random_catalog"] = random_path
-            logger.info("Saved catalogs to {0} and {1}".format(data_path, random_path))
+            # Displacements only feed the catalogue columns, so compute them only
+            # when the catalogue is actually written.
+            displacements = None
+            if want_catalogs and want_displacements:
+                assert pos_xyz is not None and rec_xyz is not None
+                logger.info("Calculating %s tracer displacements.", label)
+                displacements = pos_xyz - rec_xyz
 
+            if want_catalogs:
+                path = str(output_folder / (base_name + "_" + label + "." + ext))
+                self.catalog.write_output(
+                    path=path,
+                    is_data=is_data,
+                    reconstructed_radec=(rec_ra, rec_dec),
+                    reconstructed_redshift=rec_z,
+                    displacements=displacements,
+                    fmt=fmt,
+                )
+                saved_paths[label + "_catalog"] = path
+                logger.info("Saved %s catalog to %s", label, path)
+
+            if release:
+                # These arrays are now on disk; drop them before the next tracer.
+                if is_data:
+                    self.data_pos_xyz = self.data_rec_xyz = None
+                    self.data_rec_ra = self.data_rec_dec = self.data_rec_z = None
+                else:
+                    self.random_pos_xyz = self.random_rec_xyz = None
+                    self.random_rec_ra = self.random_rec_dec = self.random_rec_z = None
+
+        _process(is_data=True)
+        _process(is_data=False)
         return saved_paths
 
     def _save_metadata(self, output_folder: Path, base_name: str) -> Dict[str, str]:
@@ -360,7 +442,7 @@ class ReconstructionPipeline:
         """
         if self.data_rec_xyz is None or self.random_rec_xyz is None:
             self.reconstruct()
-        if self.data_rec_radec is None or self.random_rec_radec is None:
+        if self.data_rec_ra is None or self.random_rec_ra is None:
             self.convert_back()
 
         output_folder, base_name, save_options = self._prepare_output()
@@ -387,7 +469,7 @@ class ReconstructionPipeline:
         # 1. I/O + coordinate conversion.
         self.load_catalogs()
         self.convert_to_xyz()
-
+        
         # 2. Reconstruction (builds the solver and the displacement grid).
         self.reconstruct()
 
@@ -400,11 +482,13 @@ class ReconstructionPipeline:
             self.data_pos_xyz = None
             self.random_pos_xyz = None
 
-        # 4. Convert back to sky coordinates, save catalogues, drop positions.
+        # 4. Convert back to sky coordinates, then save catalogues. With
+        #    release=True, _save_catalogs drops each catalogue's position and
+        #    reconstructed arrays as soon as it is written.
         self.convert_back()
-        saved_paths.update(self._save_catalogs(output_folder, base_name, save_options))
-        self.data_pos_xyz = None
-        self.random_pos_xyz = None
+        saved_paths.update(
+            self._save_catalogs(output_folder, base_name, save_options, release=True)
+        )
 
         # 5. Metadata (cheap, no large arrays).
         saved_paths.update(self._save_metadata(output_folder, base_name))

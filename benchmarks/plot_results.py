@@ -154,9 +154,9 @@ def figure_fft_solver():
 # ---------------------------------------------------------------------------
 # Figure 3: end-to-end pipeline time vs N
 # ---------------------------------------------------------------------------
-solver = 'ifft'
-def figure_pipeline():
-    df = _load(f"pipeline_{solver}.csv")
+solver = 'multigrid'
+def figure_reconstructor():
+    df = _load(f"bao_reconstructor_{solver}.csv")
     if df is None:
         return
         
@@ -253,7 +253,7 @@ def figure_speedup():
 def figure_pipeline_memory():
     # Note: to show ifft and multigrid together, load the combined data
     # rather than just "pipeline_{solver}.csv".
-    df = _load(f"pipeline_{solver}.csv")
+    df = _load(f"bao_reconstructor_{solver}.csv")
     if df is None:
         return
         
@@ -283,7 +283,7 @@ def figure_pipeline_memory():
 def main():
     figure_mass_assignment()
     figure_fft_solver()
-    figure_pipeline()
+    figure_reconstructor()
     figure_speedup()
     figure_pipeline_memory()
 

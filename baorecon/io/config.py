@@ -41,6 +41,7 @@ class CatalogConfig:
     catalog_name: Optional[str] = None
     data_hdu: int = 1
     random_hdu: int = 1
+    catalog_format: Optional[str] = None
     masking: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
@@ -81,6 +82,7 @@ class CatalogConfig:
             random_path=config["catalog"]["random_path"],
             data_hdu=int(config["catalog"].get("data_hdu", 1)),
             random_hdu=int(config["catalog"].get("random_hdu", 1)),
+            catalog_format=config["catalog"].get("format"),
             columns=columns,
             coordinate_system=dict(config.get("coordinate_system", {})),
             cosmology=dict(config.get("cosmology", {})),

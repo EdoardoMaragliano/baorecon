@@ -44,19 +44,19 @@ def _validate_positions(pos, weights, boxsize, pbc):
 def assign(pos, weights, mesh, scheme="CIC", device="cpu", pbc=True, parallel=False):
     """Paint particles onto a fresh grid using the requested scheme.
 
-    Returns a ``(Nx, Ny, Nz)`` float64 grid (a CuPy array if ``device='gpu'``).
+    Returns a ``(Nx, Ny, Nz)`` float32 grid (a CuPy array if ``device='gpu'``).
     """
     scheme = scheme.strip().upper()
     if scheme not in _VALID:
         raise ValueError(f"Invalid scheme '{scheme}'. Valid options are: {_VALID}")
 
-    pos = np.asarray(pos, dtype=np.float64)
+    pos = np.asarray(pos, dtype=np.float32)
     if weights is None:
-        weights = np.ones(pos.shape[0], dtype=np.float64)
+        weights = np.ones(pos.shape[0], dtype=np.float32)
     else:
-        weights = np.asarray(weights, dtype=np.float64)
+        weights = np.asarray(weights, dtype=np.float32)
 
-    boxsize = np.asarray(mesh.boxsize, dtype=np.float64)
+    boxsize = np.asarray(mesh.boxsize, dtype=np.float32)
     _validate_positions(pos, weights, boxsize, pbc)
     grid_shape = mesh.shape
 
@@ -75,7 +75,7 @@ def assign(pos, weights, mesh, scheme="CIC", device="cpu", pbc=True, parallel=Fa
             raise ValueError(f"GPU mass assignment for scheme '{scheme}' is not implemented.")
         return mesh_dev
 
-    grid = np.zeros(grid_shape, dtype=np.float64)
+    grid = np.zeros(grid_shape, dtype=np.float32)
     if scheme == "NGP":
         return _cpu.ngp_assign(pos, boxsize, weights, grid, pbc=pbc)
     if scheme == "CIC":
@@ -98,7 +98,7 @@ def readout(grid, pos, mesh, scheme="CIC", device="cpu", pbc=True):
         raise ValueError(f"Invalid scheme '{scheme}'. Valid options are: {_VALID}")
 
     pos = np.asarray(pos, dtype=np.float32)
-    boxsize = np.asarray(mesh.boxsize, dtype=np.float64)
+    boxsize = np.asarray(mesh.boxsize, dtype=np.float32)
 
     if device == "gpu":
         if not CUPY_AVAILABLE:

@@ -46,7 +46,7 @@ def create_cosmology(
 
 def _as_1d_array(values: Sequence, name: str) -> np.ndarray:
     """Convert input to 1D float32 array with validation."""
-    arr = np.asarray(values, dtype=np.float64).reshape(-1)
+    arr = np.asarray(values).reshape(-1)
     if arr.size == 0:
         logger.warning("%s is empty.", name)
         raise ValueError("{0} must not be empty.".format(name))
@@ -126,10 +126,21 @@ def radec_z_to_xyz(
 
     # Vectorized Cartesian conversion
     cos_dec = np.cos(dec_rad)
-    xyz = np.empty((n_coords, 3), dtype=np.float64)
-    xyz[:, 0] = dist_mpc * cos_dec * np.cos(ra_rad) * xyz_scale
-    xyz[:, 1] = dist_mpc * cos_dec * np.sin(ra_rad) * xyz_scale
-    xyz[:, 2] = dist_mpc * np.sin(dec_rad) * xyz_scale
+    xyz = np.empty((n_coords, 3), dtype=ra_arr.dtype)
+    r_scaled = np.multiply(dist_mpc, xyz_scale) 
+    r_xy = np.multiply(r_scaled, cos_dec)       
+
+    ## x coord
+    np.cos(ra_rad, out=xyz[:, 0])
+    np.multiply(xyz[:, 0], r_xy, out=xyz[:, 0])
+
+    ## y coord
+    np.sin(ra_rad, out=xyz[:, 1])
+    np.multiply(xyz[:, 1], r_xy, out=xyz[:, 1])
+
+    ## z coord
+    np.sin(dec_rad, out=xyz[:, 2])
+    np.multiply(xyz[:, 2], r_scaled, out=xyz[:, 2])
     
     logger.debug("Coordinate conversion to XYZ complete.")
     return xyz, dist_out
@@ -147,7 +158,7 @@ def xyz_to_radec_z(
     """
     Convert Cartesian coordinates x, y, z to RA, DEC, redshift.
     """
-    xyz_arr: np.ndarray = np.asarray(xyz, dtype=np.float64)
+    xyz_arr: np.ndarray = np.asarray(xyz)
     if xyz_arr.size == 0:
         raise ValueError("xyz must not be empty.")
     if xyz_arr.ndim != 2 or xyz_arr.shape[1] != 3:
@@ -193,7 +204,7 @@ def comoving_distance(redshift: Union[float, np.ndarray], cosmo: Optional[FlatLa
     if cosmo is None:
         cosmo = Planck18
 
-    z_arr = np.asarray(redshift, dtype=np.float64)
+    z_arr = np.asarray(redshift)
     if np.any(z_arr < 0):
         raise ValueError("redshift must be >= 0.")
 
@@ -201,7 +212,7 @@ def comoving_distance(redshift: Union[float, np.ndarray], cosmo: Optional[FlatLa
     
     # Use cubic interpolation instead of linear for tight precision
     f = interp1d(z_grid, d_grid, kind='cubic', fill_value="extrapolate")
-    return f(z_arr)
+    return f(z_arr).astype(z_arr.dtype, copy=False)
 
 
 def distance_to_redshift(
@@ -213,7 +224,7 @@ def distance_to_redshift(
     if cosmo is None:
         cosmo = Planck18
 
-    d_arr = np.asarray(comoving_distance, dtype=np.float64)
+    d_arr = np.asarray(comoving_distance)
     if np.any(d_arr < 0):
         raise ValueError("comoving_distance must be >= 0.")
 
@@ -222,4 +233,4 @@ def distance_to_redshift(
     
     # Use cubic interpolation instead of linear for tight precision
     f = interp1d(d_grid, z_grid, kind='cubic', fill_value="extrapolate")
-    return f(d_arr)
+    return f(d_arr).astype(d_arr.dtype, copy=False)

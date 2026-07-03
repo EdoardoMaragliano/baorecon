@@ -47,7 +47,7 @@ extras_require = {
 
 setup(
     name="baorecon",
-    version="0.3.0",
+    version="0.4.0",
     author="Edoardo Maragliano",
     author_email="edoardo.maragliano@edu.unige.it",
     description="A simple package to perform Zeldovich reconstruction of density and velocity fields.",
