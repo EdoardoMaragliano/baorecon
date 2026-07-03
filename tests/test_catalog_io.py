@@ -3,6 +3,7 @@ import pandas as pd
 import pytest
 from astropy.table import Table
 
+from baorecon.io.backends import resolve_format
 from baorecon.io.catalog_io import Catalog
 
 
@@ -225,3 +226,13 @@ def test_write_output_roundtrip(tmp_path, ext):
 
     assert {"RA", "DEC", "Z", "S_X", "S_Y", "S_Z"}.issubset(back.columns)
     np.testing.assert_allclose(np.asarray(back["RA"]), rec_radec[:, 0], rtol=1e-5)
+
+
+def test_resolve_format_unknown_format_raises():
+    with pytest.raises(ValueError, match="Unknown catalog format"):
+        resolve_format("catalog.fits", fmt="hdf5")
+
+
+def test_resolve_format_unknown_extension_raises():
+    with pytest.raises(ValueError, match="Cannot infer catalog format"):
+        resolve_format("catalog.csv")
