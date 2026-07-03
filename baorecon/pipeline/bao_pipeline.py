@@ -267,33 +267,65 @@ class ReconstructionPipeline:
     def _save_grids(self, output_folder: Path, base_name: str, save_options: set) -> Dict[str, str]:
         """Save the grid potential/displacement and the pickled reconstructor.
 
-        Called right after :meth:`reconstruct` so the heavy solver fields can be
-        released immediately afterwards. On the GPU path the displacement grid is
-        a CuPy array, so it is moved to host before being written to FITS.
+        Each grid is copied to host, written, and its host copy released before
+        the next (larger) grid is converted -- so the potential and displacement
+        host copies are never held at once. On the GPU path the device grid is
+        also dropped once it is on disk (freeing the pool), so the device
+        potential is gone before the 3x-larger displacement host copy is made.
+        Both are skipped when ``reconstructor_object`` is requested, since the
+        pickle serialises the solver with its grids intact.
         """
         saved_paths: Dict[str, str] = {}
+        solver = self.reconstructor.solver if self.reconstructor is not None else None
+        keep_grids = "reconstructor_object" in save_options
+        on_gpu = self.config.reconstruction.get("device", "cpu") == "gpu"
 
         def _save_fits_image(data: np.ndarray, suffix: str) -> str:
             path = str(output_folder / (base_name + suffix))
-            fits.writeto(path, _to_host(data), overwrite=True, output_verify="silentfix")
+            host = _to_host(data)  # device -> host copy on the GPU path
+            fits.writeto(path, host, overwrite=True, output_verify="silentfix")
+            del host  # release the host copy before the next grid is converted
             logger.info("Saved FITS image to {0}".format(path))
             return path
 
+        def _drop_device_grid(attr: str, still_needed: bool = False) -> None:
+            """Drop the solver's reference to a saved grid and reclaim its memory."""
+            if keep_grids or still_needed or solver is None:
+                return
+            setattr(solver, attr, None)
+            if on_gpu:
+                try:
+                    import cupy as cp
+
+                    cp.get_default_memory_pool().free_all_blocks()
+                except ImportError:
+                    pass
+
         if "grid_potential" in save_options:
-            assert self.reconstructor is not None and self.reconstructor.solver is not None
-            potential = self.reconstructor.solver.potential
+            assert solver is not None
+            potential = solver.potential
             if potential is not None:
                 saved_paths["grid_potential"] = _save_fits_image(potential, "_potential.fits")
             else:
                 logger.warning("Potential not computed or available in solver. Skipping save.")
+            del potential
+            # The potential is only still needed if a displacement save is pending
+            # and the displacement has not been computed yet.
+            still_needed = (
+                "grid_displacement" in save_options
+                and getattr(solver, "_displacement", None) is None
+            )
+            _drop_device_grid("_potential", still_needed=still_needed)
 
         if "grid_displacement" in save_options:
-            assert self.reconstructor is not None and self.reconstructor.solver is not None
-            displacement = self.reconstructor.solver.displacement
+            assert solver is not None
+            displacement = solver.displacement
             if displacement is not None:
                 saved_paths["grid_displacement"] = _save_fits_image(displacement, "_displacement.fits")
             else:
                 logger.warning("Displacement not computed or available in solver. Skipping save.")
+            del displacement
+            _drop_device_grid("_displacement")
 
         if "reconstructor_object" in save_options:
             path = str(output_folder / (base_name + "_reconstructor.pkl"))
