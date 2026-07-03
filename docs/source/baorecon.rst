@@ -137,6 +137,26 @@ I/O package
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: baorecon.io.backends
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: baorecon.io.backends.base
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: baorecon.io.backends.fits_backend
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
+.. automodule:: baorecon.io.backends.parquet_backend
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: baorecon.io.naming
    :members:
    :undoc-members:

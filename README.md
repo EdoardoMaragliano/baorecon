@@ -11,7 +11,7 @@ In contrast to many existing implementations, `baorecon` is designed to be **lig
 
 * 🐍 **100% Pure Python:** Written entirely in Python with no C++ wrapper layer or complex compilation steps required.
 * ⚡ **JIT & GPU Accelerated:** Heavy mesh operations are extremely fast thanks to `njit`-compiled CPU kernels and `numba.cuda` GPU kernels.
-* 🪶 **Lightweight Dependencies:** Relies on common, standard scientific Python packages (NumPy, SciPy) rather than specialized or heavy external frameworks.
+* 🪶 **Lightweight Dependencies:** Relies on common, standard scientific Python packages (NumPy, SciPy, pandas) rather than specialized or heavy external frameworks.
 * 🧩 **Highly Modular API:** Provides a one-line high-level API entry point, a survey-ready YAML-driven pipeline, and a modular structure that allows you to use individual components (e.g., solvers, density managers) independently.
 * 🧮 **Multiple Solvers:** Includes both FFT-based solvers and a Multigrid backend. *(Note: The multigrid backend currently includes standard Jacobi smoothing as well as a semi-experimental V-cycle solver based on multi-color Gauss-Seidel).*
 
@@ -115,20 +115,33 @@ displacement_mg = mg_solver.displacement
 
 ## Pipeline
 
-For FITS catalogs and survey-style workflows, use the YAML-driven pipeline in `baorecon/pipeline`.
+For survey-style workflows with FITS or Parquet catalogs, use the YAML-driven pipeline in `baorecon/pipeline`.
 
 The pipeline covers:
 
-1. loading data and random FITS catalogs
+1. loading data and random catalogs (FITS or Parquet)
 2. reading a YAML config file
-3. selecting coordinate, weight, and ID columns
+3. selecting coordinate, weight, and ID columns (with optional column pruning on read)
 4. converting RA/DEC/redshift to Cartesian coordinates
 5. running `BAOReconstructor`
 6. preserving IDs through optional masking steps
 7. converting reconstructed coordinates back to RA/DEC/redshift
-8. saving the results to a tokenized output folder
+8. saving the results (FITS or Parquet) to a tokenized output folder
+
+The input format is inferred from the file extension (`.fits`/`.fit`,
+`.parquet`/`.pq`) or set explicitly with `catalog.format`; the output format is
+controlled by `output.format` (default `fits`).
 
 See [baorecon/pipeline/README.md](baorecon/pipeline/README.md) and [examples/bao_pipeline_example.yaml](examples/bao_pipeline_example.yaml) for the full workflow.
+
+## Working precision
+
+Catalogs and mesh arrays are held at a configurable floating-point precision.
+The default is **float32**, which roughly halves the memory footprint of the
+(often multi-million-row) random catalog versus float64. `BAOReconstructor`
+downcasts float64 inputs to the working precision automatically; pass
+`dtype=np.float64` (or set `reconstruction.dtype: float64` in the pipeline YAML)
+to opt into double precision end-to-end.
 
 ## Installation
 
@@ -188,6 +201,14 @@ GPU support requires a CUDA-enabled GPU and a CuPy build matching your
 CUDA toolkit version. If CuPy is not installed or no GPU is detected,
 `device: "cpu"` is used and GPU-only tests are skipped automatically.
 
+### Faster FITS reads (optional)
+
+Installing [`fitsio`](https://github.com/esheldon/fitsio) enables true
+column-subset reads for FITS catalogs, so only the configured columns are
+pulled off disk. Without it, FITS reads fall back to Astropy and prune columns
+in memory. Parquet reads always push column selection down to the reader and
+require `pyarrow` (included in `requirements/runtime.txt`).
+
 ## Documentation map
 
 - `baorecon/reconstruction/`: orchestrator (`BAOReconstructor`) and density preparation (`DensityManager`)
@@ -195,6 +216,7 @@ CUDA toolkit version. If CuPy is not installed or no GPU is detected,
 - `baorecon/mas/`: mass assignment (`assign`) and read-out (`readout`), CPU/GPU kernels
 - `baorecon/field_ops/`: mesh field operations (divergence, smoothing, interpolation), CPU/GPU split
 - `baorecon/mesh/README.md`: mesh geometry; `mesh/los.py` holds the line-of-sight strategies
+- `baorecon/io/`: catalog I/O with pluggable FITS/Parquet backends (`io/backends/`), YAML config parsing, and output naming
 - `baorecon/pipeline/README.md`: YAML-driven catalog pipeline and output flow
 - `baorecon/utils/README.md`: formatting, logging, backend selection, and utility helpers
 
