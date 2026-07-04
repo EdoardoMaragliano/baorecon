@@ -44,6 +44,9 @@ os.environ["MKL_NUM_THREADS"] = THREADS
 os.environ["OPENBLAS_NUM_THREADS"] = THREADS
 os.environ["NUMEXPR_NUM_THREADS"] = THREADS
 
+#import pyfftw
+#pyfftw.config.NUM_THREADS = int(THREADS)
+
 import argparse
 
 import numpy as np
@@ -51,7 +54,7 @@ import numpy as np
 import bench_common as bc
 
 N_PARTICLES = int(1e6)
-NMESHES = [128, 256, 512]
+NMESHES = [128, 256, 512, 1024]
 N_ITERATIONS = 3
 F_GROWTH = 0.8
 BIAS = 2.0

@@ -201,6 +201,10 @@ GPU support requires a CUDA-enabled GPU and a CuPy build matching your
 CUDA toolkit version. If CuPy is not installed or no GPU is detected,
 `device: "cpu"` is used and GPU-only tests are skipped automatically.
 
+For the CUDA environment variables (`CUDA_PATH`/`CUDA_HOME`) that CuPy
+needs — and how to fix a `cannot open source file "cuda_fp16.h"`
+compile error — see [docs/gpu_environment.md](docs/gpu_environment.md).
+
 ### Faster FITS reads (optional)
 
 Installing [`fitsio`](https://github.com/esheldon/fitsio) enables true

@@ -130,6 +130,8 @@ def _worker_pyrecon(n, nmesh, repeats, solver_type):
 
     def run():
         if solver_type == "ifft":
+            #import pyfftw
+            #pyfftw.config.NUM_THREADS = THREADS
             recon = IterativeFFTReconstruction(
                 f=F_GROWTH, bias=BIAS, los=None, nmesh=nmesh, boxsize=boxsize,
                 boxcenter=boxcenter, dtype="f4",
