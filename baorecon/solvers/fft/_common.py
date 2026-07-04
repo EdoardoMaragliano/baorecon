@@ -56,5 +56,63 @@ def compute_k2(k_comps):
     k2[...] = kx2[:, None, None]
     k2 += ky2[None, :, None]
     k2 += kz2[None, None, :]
-    
+
     return k2
+
+
+def build_inv_k2(k_comps, bias=1.0):
+    """Return ``1 / (bias * |k|^2)`` as a single real half-grid.
+
+    Wraps :func:`compute_k2` and inverts it in place, handling the ``k=0`` DC
+    mode (set to 0 in the output). Array-module agnostic: on CuPy inputs the
+    whole thing stays on the device. This folds the ``compute_k2 -> set DC ->
+    reciprocal -> restore DC`` boilerplate that both FFT solvers repeated in
+    ``_compute_displacement_*`` and ``_compute_potential_mesh`` into one place.
+    """
+    k2 = compute_k2(k_comps)
+
+    try:
+        import cupy
+        xp = cupy.get_array_module(k2)
+    except ImportError:
+        xp = np
+
+    k2[0, 0, 0] = 1.0
+    k2 *= bias
+    xp.divide(1.0, k2, out=k2)
+    k2[0, 0, 0] = 0.0
+    return k2
+
+
+def divergence_inplace(vector_field, k_comps, rfftn, irfftn, xp):
+    """Divergence of a vector field via the rFFT, one component at a time.
+
+    Unlike a fused ``rfftn`` over the whole ``(Nx, Ny, Nz, 3)`` field (which
+    materialises three complex half-grids plus temporaries at once), this
+    transforms a single component at a time and accumulates into one complex
+    half-grid, so the peak is ``div_k`` + one in-flight transform.
+
+    ``rfftn(real3d) -> complex half-grid`` and ``irfftn(complex, s) -> real3d``
+    are backend-specific callables supplied by the caller (scipy with
+    ``workers``/``overwrite_x`` on the CPU, ``cupy.fft`` on the GPU), keeping
+    this helper array-module agnostic. It is private to the FFT solvers and
+    replaces the shared ``field_ops.divergence_FFT`` on this path.
+    """
+    if vector_field.shape[-1] != 3:
+        raise ValueError("The last dimension of vector_field must be of size 3.")
+
+    kx, ky, kz = k_comps
+    k_bcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
+    grid_shape = vector_field.shape[:-1]
+    complex_j = xp.complex64(1j)
+
+    div_k = None
+    for i in range(3):
+        v_k = rfftn(vector_field[..., i])
+        v_k *= complex_j
+        v_k *= k_bcast[i]
+        if div_k is None:
+            div_k = v_k          # reuse the first transform as the accumulator
+        else:
+            div_k += v_k
+    return irfftn(div_k, grid_shape)

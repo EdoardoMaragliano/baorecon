@@ -42,6 +42,7 @@ os.environ["OMP_NUM_THREADS"] = THREADS
 os.environ["MKL_NUM_THREADS"] = THREADS
 os.environ["OPENBLAS_NUM_THREADS"] = THREADS
 os.environ["NUMEXPR_NUM_THREADS"] = THREADS
+os.environ["BAORECON_FFT_THREADS"] = THREADS
 
 
 
@@ -54,7 +55,7 @@ import bench_common as bc
 import sys
 sys.path.insert(0, '/home/emaragliano/Work/Projects/Dottorato/baorecon')
 
-NMESH = [256,512, 1024]
+NMESH = [256, 512, 1024]
 N_PARTICLES = [int(1e6)]
 N_ITERATIONS = 3
 F_GROWTH = 0.8

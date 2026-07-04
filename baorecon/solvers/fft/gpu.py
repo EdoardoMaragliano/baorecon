@@ -8,9 +8,12 @@ asked for, is recomputed from the device-resident displacement rather than from
 a stored psi_k grid.
 """
 
-from baorecon.field_ops import divergence_FFT
 from baorecon.solvers._interface import PoissonSolver
-from baorecon.solvers.fft._common import compute_k2, prepare_k_components
+from baorecon.solvers.fft._common import (
+    build_inv_k2,
+    divergence_inplace,
+    prepare_k_components,
+)
 from baorecon.utils.backend import get_fft_backend
 from baorecon.utils.loggers import setup_logger
 
@@ -29,10 +32,11 @@ class FFTSolverGPU(PoissonSolver):
         self.xp = self.backend.xp
         self.fft = self.backend.fft
         self._complex_j = self.xp.complex64(1j)
+        self._k_host = None
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        for key in ("backend", "xp", "fft", "_complex_j"):
+        for key in ("backend", "xp", "fft", "_complex_j", "_k_host"):
             state.pop(key, None)
         return state
 
@@ -42,6 +46,17 @@ class FFTSolverGPU(PoissonSolver):
         self.xp = self.backend.xp
         self.fft = self.backend.fft
         self._complex_j = self.xp.complex64(1j)
+        self._k_host = None
+
+    def _k_components(self):
+        """Cached host 1-D wavevector arrays ``(kx, ky, kz)``.
+
+        Cached on the host and uploaded per method; recomputing the 1-D arrays
+        on every displacement/potential pass is pure waste.
+        """
+        if self._k_host is None:
+            self._k_host = prepare_k_components(self.mesh.cell_size, self.mesh.nmesh)
+        return self._k_host
 
     def _compute_displacement_mesh(self) -> None:
         n_iter = 0 if self.RSDspace == "RealSpace" else self.n_iterations
@@ -58,60 +73,128 @@ class FFTSolverGPU(PoissonSolver):
         if delta_dev is self.delta_on_mesh:
             delta_dev = delta_dev.copy()
 
-        kx_h, ky_h, kz_h = prepare_k_components(self.mesh.cell_size, self.mesh.nmesh)
+        kx_h, ky_h, kz_h = self._k_components()
         kx, ky, kz = xp.asarray(kx_h), xp.asarray(ky_h), xp.asarray(kz_h)
-        k_comps = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
+        k_comps = (kx, ky, kz)
+        k_bcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
 
-        k2 = compute_k2((kx, ky, kz))
-        k2[0, 0, 0] = 1.0
-        k2 *= self.bias
-        xp.divide(1.0, k2, out=k2)
-        k2[0, 0, 0] = 0.0
-        inv_k2_bias = k2
+        # Only the real 1/(bias k^2) half-grid is kept resident; the -i sign is
+        # folded into the per-component multiply instead of materialising a
+        # separate full complex grid.
+        inv_k2_bias = build_inv_k2(k_comps, bias=self.bias)
 
-        inv_k2_bias_j_neg = -self._complex_j * inv_k2_bias
+        # Plane-parallel (fixed-axis) LOS projects onto a single axis, so we
+        # build just ``grad_a`` (1 grid) instead of the full 3-vector field and
+        # take its single-axis divergence -- what the old code computed (the
+        # other two components project to zero) without the 2 wasted gradient
+        # grids and 4 wasted transforms per iteration. ``FixedAxisLOS`` exposes
+        # ``.axis``; ``LocalLOS`` does not (None here). The irfft->rfft round
+        # trip is kept (not collapsed to k_a^2/k^2): it cleans the Nyquist
+        # plane, which the collapsed form changes by ~1% on the default axis.
+        axis = getattr(self.los, "axis", None)
 
-        delta_k_it = self.fft.rfftn(delta_dev)
+        # A radial (LocalLOS) projection is a per-cell scalar contraction
+        # s(x) = grad.n_hat; streaming it avoids the full (N,N,N,3) gradient and
+        # the heavy device-side ``project_vector_field`` temporaries (which also
+        # redundantly re-normalise an already-unit versor). Any other LOS falls
+        # back to the generic gradient+project+divergence path.
+        versor = None
+        if axis is None and n_iterations > 0:
+            versor = getattr(self.los, "radial_versor", None)
 
-        # ``temp_k_comp`` is reused for every component transform, both in the
-        # iterations and in the final displacement build, so it is allocated
-        # once and freed at the very end (not per-iteration).
-        temp_k_comp = xp.empty_like(delta_k_it)
-        if n_iterations > 0:
+        # cupy FFT callables for the lean component-wise divergence (fallback).
+        _rfftn = lambda a: self.fft.rfftn(xp.ascontiguousarray(a))
+        _irfftn = lambda a, s: self.fft.irfftn(a, s=s)
+
+        delta_k = self.fft.rfftn(delta_dev)
+
+        # One complex half-grid, reused for every component transform below.
+        temp_k_comp = xp.empty_like(delta_k)
+
+        if axis is not None:
+            ka = k_bcast[axis]                      # k along the LOS axis
+        elif versor is not None:
+            n_hat = xp.asarray(versor)              # upload the unit versor once (3R device)
+            s = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)   # reused scalar buffer
+        elif n_iterations > 0:
             grad_phi_est_x = xp.empty(delta_dev.shape + (3,), dtype=delta_dev.dtype)
 
         for iteration in range(n_iterations):
             logger.info(f"Iteration {iteration + 1}")
 
-            scaled_delta_k = inv_k2_bias_j_neg * delta_k_it
+            if axis is not None:
+                # Single-component gradient: grad_a = irfft(-i k_a inv_k2_bias delta_k)
+                xp.multiply(delta_k, inv_k2_bias, out=temp_k_comp)
+                del delta_k     # dead until rebuilt below; return its block to the pool
+                temp_k_comp *= ka
+                temp_k_comp *= -self._complex_j
+                grad_a = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
+                # Single-axis divergence: correction = irfft(i k_a rfft(grad_a))
+                corr_k = self.fft.rfftn(grad_a)
+                corr_k *= ka
+                corr_k *= self._complex_j
+                correction = self.fft.irfftn(corr_k, s=delta_dev.shape)
+            elif versor is not None:
+                # LocalLOS streamed: s = grad.n_hat, accumulated one component
+                # at a time (no full gradient field, no project_vector_field).
+                scaled_delta_k = delta_k * inv_k2_bias
+                del delta_k     # dead until rebuilt below; return its block to the pool
+                scaled_delta_k *= -self._complex_j
+                for i in range(3):
+                    xp.multiply(scaled_delta_k, k_bcast[i], out=temp_k_comp)
+                    grad_i = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
+                    if i == 0:
+                        xp.multiply(grad_i, n_hat[..., 0], out=s)
+                    else:
+                        grad_i *= n_hat[..., i]
+                        s += grad_i
+                del scaled_delta_k
+                # correction = irfft( sum_j i k_j rfft(s * n_hat_j) ), streamed.
+                div_k = None
+                for j in range(3):
+                    comp_k = self.fft.rfftn(s * n_hat[..., j])   # s*n_hat_j is contiguous
+                    comp_k *= k_bcast[j]
+                    comp_k *= self._complex_j
+                    if div_k is None:
+                        div_k = comp_k
+                    else:
+                        div_k += comp_k
+                correction = self.fft.irfftn(div_k, s=delta_dev.shape)
+            else:
+                # Generic-LOS fallback: full gradient, project, divergence.
+                scaled_delta_k = delta_k * inv_k2_bias
+                del delta_k     # dead until rebuilt below; return its block to the pool
+                scaled_delta_k *= -self._complex_j
+                for i in range(3):
+                    xp.multiply(scaled_delta_k, k_bcast[i], out=temp_k_comp)
+                    grad_phi_est_x[..., i] = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
+                del scaled_delta_k
+                parallel = self.los.project_parallel(grad_phi_est_x, out=grad_phi_est_x)
+                correction = divergence_inplace(parallel, k_comps, _rfftn, _irfftn, xp)
 
-            for i in range(3):
-                xp.multiply(k_comps[i], scaled_delta_k, out=temp_k_comp)
-                grad_phi_est_x[..., i] = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
-
-            del scaled_delta_k
-
-            parallel = self.los.project_parallel(grad_phi_est_x, out=grad_phi_est_x)
-            correction = divergence_FFT(parallel, (kx, ky, kz))
             correction *= - self.f
-
             if iteration == 0:
                 correction /= (1 + self.beta)
 
             xp.add(delta_dev, correction, out=correction)
-            delta_k_it = self.fft.rfftn(correction)
+            delta_k = self.fft.rfftn(correction)
 
         if n_iterations > 0:
-            del grad_phi_est_x
+            if versor is not None:
+                del s, n_hat
+            elif axis is None:
+                del grad_phi_est_x
 
         # Build the displacement straight on the device and keep it there. The
         # potential field (psi_k) is no longer materialised: when a potential is
         # requested it is recomputed from this displacement, so the iFFT
         # reconstruction path never pays for an unused complex grid nor its host
         # transfer. Only the final per-particle read-out leaves the device.
+        # Multiply order kept as before (k_i, inv_k2_bias, +i) so this stays
+        # bit-for-bit and the GRF/analytic tolerances (1e-6) are unaffected.
         displacement_dev = xp.empty(delta_dev.shape + (3,), dtype=delta_dev.dtype)
         for i in range(3):
-            xp.multiply(k_comps[i], delta_k_it, out=temp_k_comp)
+            xp.multiply(k_bcast[i], delta_k, out=temp_k_comp)
             temp_k_comp *= inv_k2_bias
             temp_k_comp *= self._complex_j
             displacement_dev[..., i] = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
@@ -126,27 +209,26 @@ class FFTSolverGPU(PoissonSolver):
             self._compute_displacement_mesh()
         xp = self.xp
 
-        kx_h, ky_h, kz_h = prepare_k_components(self.mesh.cell_size, self.mesh.nmesh)
+        kx_h, ky_h, kz_h = self._k_components()
         kx, ky, kz = xp.asarray(kx_h), xp.asarray(ky_h), xp.asarray(kz_h)
-        k_comps = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
+        k_bcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
 
-        k2 = compute_k2((kx, ky, kz))
-        k2[0, 0, 0] = 1.0
-        xp.divide(1.0, k2, out=k2)
-        k2[0, 0, 0] = 0.0
-        inv_k2 = k2
+        inv_k2 = build_inv_k2((kx, ky, kz))
 
         # phi_k = sum_i (i k_i / k^2) psi_k_i. psi_k is transformed one component
         # at a time from the device-resident displacement, so no full psi_k grid
-        # is ever kept in memory.
+        # is ever kept in memory; the first transform doubles as the accumulator.
         disp = self._displacement
-        phi_k = xp.zeros(inv_k2.shape, dtype=xp.complex64)
+        phi_k = None
         for i in range(3):
             psi_k_comp = self.fft.rfftn(xp.ascontiguousarray(disp[..., i]))
-            psi_k_comp *= k_comps[i]
+            psi_k_comp *= k_bcast[i]
             psi_k_comp *= inv_k2
             psi_k_comp *= self._complex_j
-            phi_k += psi_k_comp
+            if phi_k is None:
+                phi_k = psi_k_comp
+            else:
+                phi_k += psi_k_comp
 
         potential_dev = self.fft.irfftn(phi_k, s=self.delta_on_mesh.shape, axes=(0, 1, 2))
         self._potential = self.backend.to_host(potential_dev)
