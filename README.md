@@ -209,16 +209,34 @@ pulled off disk. Without it, FITS reads fall back to Astropy and prune columns
 in memory. Parquet reads always push column selection down to the reader and
 require `pyarrow` (included in `requirements/runtime.txt`).
 
+### Low-memory CPU FFT backend (optional)
+
+The iterative FFT (iFFT) solver has an opt-in in-place CPU backend built on
+[`pyfftw`](https://pyfftw.readthedocs.io) that transforms in place instead of
+allocating a fresh array per `rfftn`/`irfftn`. Enable it with a single
+environment variable — no code or config changes:
+
+```bash
+BAORECON_FFT=pyfftw python your_run.py
+```
+
+If `pyfftw` is not installed the run transparently falls back to scipy (the
+default). The radial line-of-sight projection is streamed on both CPU paths
+regardless of this setting. See [docs/pyfftw_backend.md](docs/pyfftw_backend.md)
+for thread control, FFTW planning/wisdom, and measured memory savings.
+
 ## Documentation map
 
 - `baorecon/reconstruction/`: orchestrator (`BAOReconstructor`) and density preparation (`DensityManager`)
-- `baorecon/solvers/`: FFT (`fft/{cpu,gpu}.py`) and multigrid (`multigrid/`) displacement solvers behind the shared `PoissonSolver` interface
+- `baorecon/solvers/`: FFT (`fft/{cpu,gpu}.py`) and multigrid (`multigrid/`) displacement solvers behind the shared `PoissonSolver` interface. The FFT solvers stream the radial line-of-sight projection (`fft/_radial_stream.py`) to keep peak memory low
 - `baorecon/mas/`: mass assignment (`assign`) and read-out (`readout`), CPU/GPU kernels
 - `baorecon/field_ops/`: mesh field operations (divergence, smoothing, interpolation), CPU/GPU split
 - `baorecon/mesh/README.md`: mesh geometry; `mesh/los.py` holds the line-of-sight strategies
 - `baorecon/io/`: catalog I/O with pluggable FITS/Parquet backends (`io/backends/`), YAML config parsing, and output naming
 - `baorecon/pipeline/README.md`: YAML-driven catalog pipeline and output flow
 - `baorecon/utils/README.md`: formatting, logging, backend selection, and utility helpers
+- [docs/pyfftw_backend.md](docs/pyfftw_backend.md): optional in-place, low-memory CPU FFT backend (`BAORECON_FFT=pyfftw`)
+- `benchmarks/README.md`: profiling scripts comparing baorecon (CPU/GPU) against pyrecon
 
 ## License
 
