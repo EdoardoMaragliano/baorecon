@@ -84,31 +84,33 @@ def build_inv_k2(k_comps, bias=1.0):
     return k2
 
 
-def divergence_inplace(vector_field, k_comps, rfftn, irfftn, xp):
-    """Divergence of a vector field via the rFFT, one component at a time.
+def divergence_from_components(get_component, k_comps, rfftn, irfftn, xp):
+    """Divergence of a vector field whose components are produced on demand.
 
-    Unlike a fused ``rfftn`` over the whole ``(Nx, Ny, Nz, 3)`` field (which
-    materialises three complex half-grids plus temporaries at once), this
-    transforms a single component at a time and accumulates into one complex
-    half-grid, so the peak is ``div_k`` + one in-flight transform.
+    ``get_component(i)`` returns the ``i``-th real-space component as an
+    ``(Nx, Ny, Nz)`` array. The divergence
+    ``sum_i d/dx_i field_i = irfft(sum_i i k_i rfft(field_i))`` is accumulated
+    one component at a time into a single complex half-grid (the first transform
+    doubles as the accumulator), so the full ``(Nx, Ny, Nz, 3)`` vector field
+    never has to exist -- the caller can synthesise each component lazily (e.g.
+    the streamed radial projection scatters ``s * n_hat_i`` into a scratch grid).
 
-    ``rfftn(real3d) -> complex half-grid`` and ``irfftn(complex, s) -> real3d``
+    ``rfftn(real3d) -> complex half-grid`` and ``irfftn(complex, shape) -> real3d``
     are backend-specific callables supplied by the caller (scipy with
     ``workers``/``overwrite_x`` on the CPU, ``cupy.fft`` on the GPU), keeping
-    this helper array-module agnostic. It is private to the FFT solvers and
-    replaces the shared ``field_ops.divergence_FFT`` on this path.
+    this helper array-module agnostic.
     """
-    if vector_field.shape[-1] != 3:
-        raise ValueError("The last dimension of vector_field must be of size 3.")
-
     kx, ky, kz = k_comps
     k_bcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
-    grid_shape = vector_field.shape[:-1]
     complex_j = xp.complex64(1j)
 
     div_k = None
+    grid_shape = None
     for i in range(3):
-        v_k = rfftn(vector_field[..., i])
+        component = get_component(i)
+        if grid_shape is None:
+            grid_shape = component.shape
+        v_k = rfftn(component)
         v_k *= complex_j
         v_k *= k_bcast[i]
         if div_k is None:
