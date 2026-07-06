@@ -11,13 +11,72 @@ a stored psi_k grid.
 from baorecon.solvers._interface import PoissonSolver
 from baorecon.solvers.fft._common import (
     build_inv_k2,
-    divergence_inplace,
+    divergence_from_components,
     prepare_k_components,
 )
 from baorecon.utils.backend import get_fft_backend
 from baorecon.utils.loggers import setup_logger
 
+try:
+    import cupy as _cupy
+except ImportError:  # keep this module importable on CPU-only hosts (cupy is runtime-only)
+    _cupy = None
+
 logger = setup_logger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# On-the-fly radial (LocalLOS) projection kernels, on the device.
+#
+# Device analogues of the numba kernels in ``_radial_stream``: they evaluate the
+# radial unit versor cell by cell -- n_hat_a = coord_a / |coord|, with
+# coord_a = min_corner[a] + idx_a * cell_size[a] -- so no (Nx,Ny,Nz,3) versor
+# grid is ever stored (on host or device). The cell index (ix,iy,iz) is recovered
+# from the flat ElementwiseKernel index ``i`` of a C-contiguous (Nx,Ny,Nz) array.
+# The versor is single precision (matching ``LocalLOS.radial_versor``); the
+# gradient/output dtype ``T`` follows the working precision. The cell at the
+# observer (|coord| = 0) yields a zero versor, as ``radial_versor`` does.
+# ---------------------------------------------------------------------------
+_VERSOR_C = '''
+    long iz = i % nz;
+    long iy = (i / nz) % ny;
+    long ix = i / ((long)ny * nz);
+    float cx = min_x + (float)ix * cell_x;
+    float cy = min_y + (float)iy * cell_y;
+    float cz = min_z + (float)iz * cell_z;
+    float r2 = cx * cx + cy * cy + cz * cz;
+    float versor = 0.0f;
+    if (r2 > 0.0f) {
+        float ca = (axis == 0) ? cx : ((axis == 1) ? cy : cz);
+        versor = ca / sqrtf(r2);
+    }
+'''
+
+if _cupy is not None:
+    # s += grad * n_hat_axis, streamed one gradient component at a time
+    # (``init`` writes the axis-0 pass, so s needs no separate zeroing).
+    _project_grad_onto_los = _cupy.ElementwiseKernel(
+        'T grad, int32 axis, float32 min_x, float32 min_y, float32 min_z, '
+        'float32 cell_x, float32 cell_y, float32 cell_z, int32 ny, int32 nz, int32 init',
+        'raw T s',
+        _VERSOR_C + '''
+        T contribution = grad * versor;
+        s[i] = init ? contribution : (s[i] + contribution);
+        ''',
+        'project_grad_onto_los')
+
+    # parallel = s * n_hat_axis (the axis component of the parallel vector field)
+    _reconstruct_parallel_vector = _cupy.ElementwiseKernel(
+        'T s, int32 axis, float32 min_x, float32 min_y, float32 min_z, '
+        'float32 cell_x, float32 cell_y, float32 cell_z, int32 ny, int32 nz',
+        'T parallel',
+        _VERSOR_C + '''
+        parallel = s * versor;
+        ''',
+        'reconstruct_parallel_vector')
+else:
+    _project_grad_onto_los = None
+    _reconstruct_parallel_vector = None
 
 
 class FFTSolverGPU(PoissonSolver):
@@ -63,135 +122,119 @@ class FFTSolverGPU(PoissonSolver):
         self._compute_displacement_iterative_potential(n_iterations=n_iter)
 
     def _compute_displacement_iterative_potential(self, n_iterations=3) -> None:
+        """Iterative Zel'dovich (Burden) reconstruction of the displacement, on the GPU.
+
+        Each iteration solves the potential ``phi = delta / (bias k^2)``, takes
+        its gradient, projects the gradient onto the line of sight, and uses the
+        divergence of that parallel field to correct the density. On convergence
+        the displacement is ``psi = grad(phi)``. Everything stays device-resident.
+        """
         logger.info(f"Computing displacement iteratively with {n_iterations} iterations (GPU)")
         xp = self.xp
 
-        # Work on a private copy: the Burden iteration overwrites delta in place,
-        # and ``to_device`` returns the input unchanged when it is already a
-        # device array, so without this we would mutate the caller's delta.
+        # delta_dev is read-only here (re-added each Burden iteration, never
+        # mutated), so no private copy is needed even when the input already lives
+        # on the device. Keep it read-only if you touch the loop below.
         delta_dev = self.backend.to_device(self.delta_on_mesh)
-        if delta_dev is self.delta_on_mesh:
-            delta_dev = delta_dev.copy()
 
         kx_h, ky_h, kz_h = self._k_components()
         kx, ky, kz = xp.asarray(kx_h), xp.asarray(ky_h), xp.asarray(kz_h)
         k_comps = (kx, ky, kz)
         k_bcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
 
-        # Only the real 1/(bias k^2) half-grid is kept resident; the -i sign is
-        # folded into the per-component multiply instead of materialising a
-        # separate full complex grid.
         inv_k2_bias = build_inv_k2(k_comps, bias=self.bias)
 
-        # Plane-parallel (fixed-axis) LOS projects onto a single axis, so we
-        # build just ``grad_a`` (1 grid) instead of the full 3-vector field and
-        # take its single-axis divergence -- what the old code computed (the
-        # other two components project to zero) without the 2 wasted gradient
-        # grids and 4 wasted transforms per iteration. ``FixedAxisLOS`` exposes
-        # ``.axis``; ``LocalLOS`` does not (None here). The irfft->rfft round
-        # trip is kept (not collapsed to k_a^2/k^2): it cleans the Nyquist
-        # plane, which the collapsed form changes by ~1% on the default axis.
+        # The line of sight sets the geometry of the projection:
+        #  * FixedAxisLOS (plane-parallel): n_hat is a fixed Cartesian axis, so the
+        #    parallel field keeps only that component -- one gradient component and
+        #    a single-axis divergence.
+        #  * LocalLOS (radial): n_hat = x/|x| points from the observer to each cell,
+        #    evaluated on the fly by the device kernels (no versor grid). Any other
+        #    LOS is unsupported.
+        # (The irfft->rfft round trip below is deliberate, not collapsible to
+        #  k_a^2/k^2: it cleans the Nyquist plane.)
         axis = getattr(self.los, "axis", None)
+        radial = axis is None and getattr(self.los, "min_corner", None) is not None
 
-        # A radial (LocalLOS) projection is a per-cell scalar contraction
-        # s(x) = grad.n_hat; streaming it avoids the full (N,N,N,3) gradient and
-        # the heavy device-side ``project_vector_field`` temporaries (which also
-        # redundantly re-normalise an already-unit versor). Any other LOS falls
-        # back to the generic gradient+project+divergence path.
-        versor = None
-        if axis is None and n_iterations > 0:
-            versor = getattr(self.los, "radial_versor", None)
-
-        # cupy FFT callables for the lean component-wise divergence (fallback).
         _rfftn = lambda a: self.fft.rfftn(xp.ascontiguousarray(a))
         _irfftn = lambda a, s: self.fft.irfftn(a, s=s)
 
+        # Density contrast in Fourier space.
         delta_k = self.fft.rfftn(delta_dev)
-
-        # One complex half-grid, reused for every component transform below.
-        temp_k_comp = xp.empty_like(delta_k)
+        temp_k_comp = xp.empty_like(delta_k)   # reused complex scratch
 
         if axis is not None:
             ka = k_bcast[axis]                      # k along the LOS axis
-        elif versor is not None:
-            n_hat = xp.asarray(versor)              # upload the unit versor once (3R device)
-            s = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)   # reused scalar buffer
+        elif radial and n_iterations > 0:
+            # Radial LOS geometry as scalars for the on-the-fly versor, plus the
+            # parallel magnitude s and a reused scatter scratch (no versor grid).
+            mc, cs = self.los.min_corner, self.los.cell_size
+            min_x, min_y, min_z = float(mc[0]), float(mc[1]), float(mc[2])
+            cell_x, cell_y, cell_z = float(cs[0]), float(cs[1]), float(cs[2])
+            ny, nz = int(delta_dev.shape[1]), int(delta_dev.shape[2])
+            s = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)            # s = grad . n_hat
+            proj_scratch = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)  # s * n_hat
+            scaled_k = xp.empty_like(delta_k)   # reused complex scratch: delta_k * inv_k2_bias
         elif n_iterations > 0:
-            grad_phi_est_x = xp.empty(delta_dev.shape + (3,), dtype=delta_dev.dtype)
+            raise TypeError(
+                f"FFTSolverGPU does not support line-of-sight strategy "
+                f"{type(self.los).__name__!r}: expected FixedAxisLOS (exposes "
+                f"'.axis') or LocalLOS (exposes '.min_corner')."
+            )
 
         for iteration in range(n_iterations):
             logger.info(f"Iteration {iteration + 1}")
 
             if axis is not None:
-                # Single-component gradient: grad_a = irfft(-i k_a inv_k2_bias delta_k)
+                # Gradient of the potential along the LOS axis: grad_a = d_a phi.
                 xp.multiply(delta_k, inv_k2_bias, out=temp_k_comp)
-                del delta_k     # dead until rebuilt below; return its block to the pool
+                del delta_k
                 temp_k_comp *= ka
                 temp_k_comp *= -self._complex_j
                 grad_a = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
-                # Single-axis divergence: correction = irfft(i k_a rfft(grad_a))
+                # Divergence of the parallel field (single axis): d_a grad_a.
                 corr_k = self.fft.rfftn(grad_a)
                 corr_k *= ka
                 corr_k *= self._complex_j
                 correction = self.fft.irfftn(corr_k, s=delta_dev.shape)
-            elif versor is not None:
-                # LocalLOS streamed: s = grad.n_hat, accumulated one component
-                # at a time (no full gradient field, no project_vector_field).
-                scaled_delta_k = delta_k * inv_k2_bias
-                del delta_k     # dead until rebuilt below; return its block to the pool
-                scaled_delta_k *= -self._complex_j
+                
+            elif radial:
+                # Project the gradient onto the radial LOS: accumulate the parallel
+                # magnitude s = grad.n_hat one gradient component at a time, with the
+                # versor evaluated on the fly by the device kernel (no versor grid).
+                xp.multiply(delta_k, inv_k2_bias, out=scaled_k)
+                del delta_k
+                scaled_k *= -self._complex_j
                 for i in range(3):
-                    xp.multiply(scaled_delta_k, k_bcast[i], out=temp_k_comp)
+                    xp.multiply(scaled_k, k_bcast[i], out=temp_k_comp)
                     grad_i = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
-                    if i == 0:
-                        xp.multiply(grad_i, n_hat[..., 0], out=s)
-                    else:
-                        grad_i *= n_hat[..., i]
-                        s += grad_i
-                del scaled_delta_k
-                # correction = irfft( sum_j i k_j rfft(s * n_hat_j) ), streamed.
-                div_k = None
-                for j in range(3):
-                    comp_k = self.fft.rfftn(s * n_hat[..., j])   # s*n_hat_j is contiguous
-                    comp_k *= k_bcast[j]
-                    comp_k *= self._complex_j
-                    if div_k is None:
-                        div_k = comp_k
-                    else:
-                        div_k += comp_k
-                correction = self.fft.irfftn(div_k, s=delta_dev.shape)
-            else:
-                # Generic-LOS fallback: full gradient, project, divergence.
-                scaled_delta_k = delta_k * inv_k2_bias
-                del delta_k     # dead until rebuilt below; return its block to the pool
-                scaled_delta_k *= -self._complex_j
-                for i in range(3):
-                    xp.multiply(scaled_delta_k, k_bcast[i], out=temp_k_comp)
-                    grad_phi_est_x[..., i] = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
-                del scaled_delta_k
-                parallel = self.los.project_parallel(grad_phi_est_x, out=grad_phi_est_x)
-                correction = divergence_inplace(parallel, k_comps, _rfftn, _irfftn, xp)
+                    _project_grad_onto_los(grad_i, i, min_x, min_y, min_z,
+                                           cell_x, cell_y, cell_z, ny, nz, int(i == 0), s)
+                self.xp.get_default_memory_pool().free_all_blocks()
 
+                # Divergence of the parallel field s*n_hat, each component scattered
+                # on the fly into the reused scratch grid.
+                def _parallel_component(i):
+                    _reconstruct_parallel_vector(s, i, min_x, min_y, min_z,
+                                                 cell_x, cell_y, cell_z, ny, nz, proj_scratch)
+                    return proj_scratch
+
+                correction = divergence_from_components(
+                    _parallel_component, k_comps, _rfftn, _irfftn, xp)
+
+            # Burden update: reconstructed density = delta - f * div(parallel)
+            # (with the RSD factor 1/(1+beta) on the first iteration).
             correction *= - self.f
             if iteration == 0:
                 correction /= (1 + self.beta)
-
             xp.add(delta_dev, correction, out=correction)
             delta_k = self.fft.rfftn(correction)
 
-        if n_iterations > 0:
-            if versor is not None:
-                del s, n_hat
-            elif axis is None:
-                del grad_phi_est_x
+        if n_iterations > 0 and radial:
+            del s, proj_scratch, scaled_k
 
-        # Build the displacement straight on the device and keep it there. The
-        # potential field (psi_k) is no longer materialised: when a potential is
-        # requested it is recomputed from this displacement, so the iFFT
-        # reconstruction path never pays for an unused complex grid nor its host
-        # transfer. Only the final per-particle read-out leaves the device.
-        # Multiply order kept as before (k_i, inv_k2_bias, +i) so this stays
-        # bit-for-bit and the GRF/analytic tolerances (1e-6) are unaffected.
+        # Converged density -> displacement psi = grad(phi), phi = delta/(bias k^2),
+        # built and kept on the device (the potential is recomputed from psi on demand).
         displacement_dev = xp.empty(delta_dev.shape + (3,), dtype=delta_dev.dtype)
         for i in range(3):
             xp.multiply(k_bcast[i], delta_k, out=temp_k_comp)
@@ -215,9 +258,7 @@ class FFTSolverGPU(PoissonSolver):
 
         inv_k2 = build_inv_k2((kx, ky, kz))
 
-        # phi_k = sum_i (i k_i / k^2) psi_k_i. psi_k is transformed one component
-        # at a time from the device-resident displacement, so no full psi_k grid
-        # is ever kept in memory; the first transform doubles as the accumulator.
+        # Potential from the displacement: phi_k = i k.psi_k / k^2.
         disp = self._displacement
         phi_k = None
         for i in range(3):
