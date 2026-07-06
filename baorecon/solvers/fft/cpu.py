@@ -12,8 +12,12 @@ import scipy.fft as sfft
 from baorecon.solvers._interface import PoissonSolver
 from baorecon.solvers.fft._common import (
     build_inv_k2,
-    divergence_inplace,
+    divergence_from_components,
     prepare_k_components,
+)
+from baorecon.solvers.fft._radial_stream import (
+    project_grad_onto_los,
+    reconstruct_parallel_vector,
 )
 from baorecon.utils.backend import use_pyfftw
 from baorecon.utils.loggers import setup_logger
@@ -58,11 +62,16 @@ class FFTSolverCPU(PoissonSolver):
         self._compute_displacement_iterative_potential(n_iterations=n_iter)
 
     def _compute_displacement_iterative_potential(self, n_iterations=3) -> None:
+        """Iterative Zel'dovich (Burden) reconstruction of the displacement.
+
+        Each iteration solves the potential ``phi = delta / (bias k^2)``, takes
+        its gradient, projects the gradient onto the line of sight, and uses the
+        divergence of that parallel field to correct the density. On convergence
+        the displacement is ``psi = grad(phi)``.
+        """
         logger.info(f"Computing displacement iteratively with {n_iterations} iterations")
 
-        # Opt-in low-memory path: in-place pyfftw transforms (BAORECON_FFT=pyfftw).
-        # Only the LOS types the reconstructor builds are handled in place; any
-        # other case transparently falls through to the scipy path below.
+        # Optional low-memory backend (BAORECON_FFT=pyfftw); identical physics.
         if use_pyfftw():
             from baorecon.solvers.fft import _pyfftw_cpu as _ip
             if _ip.supported(self.los, n_iterations):
@@ -81,72 +90,83 @@ class FFTSolverCPU(PoissonSolver):
 
         inv_k2_bias = build_inv_k2(k_comps, bias=self.bias)
 
-        # A plane-parallel (fixed-axis) LOS projects onto a single axis, so the
-        # gradient/divergence only ever touch that one component: we build just
-        # ``grad_a`` (1 grid) instead of the full 3-vector field and take its
-        # single-axis divergence -- bit-for-bit what the old code computed (the
-        # other two components project to zero) but without the 2 wasted
-        # gradient grids and 4 wasted transforms per iteration.
-        # ``FixedAxisLOS`` exposes ``.axis``; ``LocalLOS`` does not (None here).
-        # NB: the irfft->rfft round trip is kept (not collapsed to k_a^2/k^2)
-        # because that round trip is what cleans the Nyquist plane; collapsing
-        # it changes the Nyquist modes by ~1% on the default axis.
+        # The line of sight sets the geometry of the projection:
+        #  * FixedAxisLOS (plane-parallel): n_hat is a fixed Cartesian axis, so the
+        #    parallel field keeps only that component -- one gradient component and
+        #    a single-axis divergence.
+        #  * LocalLOS (radial): n_hat = x/|x| points from the observer to each
+        #    cell, so the full gradient is projected onto n_hat cell by cell.
+        # (The irfft->rfft round trip below is deliberate, not collapsible to
+        #  k_a^2/k^2: it cleans the Nyquist plane.)
         axis = getattr(self.los, "axis", None)
+        radial = axis is None and getattr(self.los, "min_corner", None) is not None
 
-        # NB (CPU): a radial (LocalLOS) projection is NOT streamed here. Streaming
-        # the scalar s = grad.n_hat through numpy would replace the parallel
-        # numba ``project_vector_field_jit`` with several single-threaded passes
-        # over the full grid, which benchmarks ~30% slower on the CPU for no RSS
-        # gain (the freed grid is not returned to the OS). The GPU solver does
-        # stream, because there the elementwise ops are parallel on-device and it
-        # avoids a very heavy ``project_vector_field`` temporary allocation.
-
-        # scipy FFT callables for the lean component-wise divergence (LocalLOS).
-        _rfftn = lambda a: sfft.rfftn(a, workers=-1)
+        _rfftn_scratch = lambda a: sfft.rfftn(a, workers=-1, overwrite_x=True)
         _irfftn = lambda a, s: sfft.irfftn(a, s=s, workers=-1, overwrite_x=True)
 
-        # First transform of the original delta -- never overwrite it (Burden).
+        # Density contrast in Fourier space (kept intact: each iteration adds delta).
         delta_k = sfft.rfftn(delta, workers=-1)
-        # One complex half-grid, reused for every component transform below
-        # (both the loop and the final displacement build) instead of a fresh
-        # ``.copy()`` per component.
-        tmp_k = np.empty_like(delta_k)
+        tmp_k = np.empty_like(delta_k)   # reused complex scratch
 
         if axis is not None:
             ka = k_bcast[axis]                      # k along the LOS axis
+        elif radial and n_iterations > 0:
+            # Radial LOS geometry, plus the parallel magnitude s and field s*n_hat.
+            min_corner = self.los.min_corner
+            cell_size = self.los.cell_size
+            los_magnitude = np.empty(delta.shape, dtype=delta.dtype)   # s = grad . n_hat
+            proj_scratch = np.empty(delta.shape, dtype=delta.dtype)    # s * n_hat
         elif n_iterations > 0:
-            # LocalLOS (and any generic LOS): full real-space gradient buffer.
-            grad = np.empty(delta.shape + (3,), dtype=delta.dtype)
+            raise TypeError(
+                f"FFTSolverCPU does not support line-of-sight strategy "
+                f"{type(self.los).__name__!r}: expected FixedAxisLOS (exposes "
+                f"'.axis') or LocalLOS (exposes '.min_corner')."
+            )
 
         for iteration in range(n_iterations):
             logger.info(f"Iteration {iteration + 1}")
 
             if axis is not None:
-                # Single-component gradient: grad_a = irfft(-i k_a inv_k2_bias delta_k)
+                # Gradient of the potential along the LOS axis: grad_a = d_a phi.
                 np.multiply(delta_k, inv_k2_bias, out=tmp_k)
-                del delta_k     # dead until rebuilt below; free it before the transforms
+                del delta_k
                 tmp_k *= ka
                 tmp_k *= -self._complex_j
                 grad_a = sfft.irfftn(tmp_k, s=delta.shape, workers=-1, overwrite_x=True)
-                # Single-axis divergence: correction = irfft(i k_a rfft(grad_a))
+                # Divergence of the parallel field (single axis): d_a grad_a.
                 corr_k = sfft.rfftn(grad_a, workers=-1, overwrite_x=True)
                 corr_k *= ka
                 corr_k *= self._complex_j
                 correction = sfft.irfftn(corr_k, s=delta.shape, workers=-1, overwrite_x=True)
-            else:
-                # LocalLOS (radial) / generic LOS: build the full gradient,
-                # project onto the LOS with the parallel numba JIT kernel, then
-                # take the lean component-wise divergence.
+                
+            elif radial:
+                # Project the gradient onto the radial LOS: accumulate the parallel
+                # magnitude s = grad.n_hat one gradient component at a time.
                 scaled_k = delta_k * inv_k2_bias
-                del delta_k     # dead until rebuilt below; free it before the gradient/divergence
+                del delta_k
                 scaled_k *= -self._complex_j
                 for i in range(3):
                     np.multiply(scaled_k, k_bcast[i], out=tmp_k)
-                    grad[..., i] = sfft.irfftn(tmp_k, s=delta.shape, workers=-1, overwrite_x=True)
-                del scaled_k
-                parallel = self.los.project_parallel(grad, out=grad)
-                correction = divergence_inplace(parallel, k_comps, _rfftn, _irfftn, np)
+                    grad_i = sfft.irfftn(tmp_k, s=delta.shape, workers=-1, overwrite_x=True)
+                    project_grad_onto_los(los_magnitude, grad_i, i,
+                                          min_corner[0], min_corner[1], min_corner[2],
+                                          cell_size[0], cell_size[1], cell_size[2], i == 0)
+                del scaled_k, grad_i
 
+                # Divergence of the parallel field s*n_hat, each component
+                # reconstructed on the fly.
+                def _parallel_component(i):
+                    reconstruct_parallel_vector(proj_scratch, los_magnitude, i,
+                                                min_corner[0], min_corner[1], min_corner[2],
+                                                cell_size[0], cell_size[1], cell_size[2])
+                    return proj_scratch
+
+                correction = divergence_from_components(
+                    _parallel_component, k_comps, _rfftn_scratch, _irfftn, np
+                )
+
+            # Burden update: reconstructed density = delta - f * div(parallel)
+            # (with the RSD factor 1/(1+beta) on the first iteration).
             np.multiply(correction, -self.f, out=correction)
             if iteration == 0:
                 np.divide(correction, (1 + self.beta), out=correction)
@@ -154,12 +174,10 @@ class FFTSolverCPU(PoissonSolver):
 
             delta_k = sfft.rfftn(correction, workers=-1, overwrite_x=True)
 
-        if axis is None and n_iterations > 0:
-            del grad
+        if radial and n_iterations > 0:
+            del los_magnitude, proj_scratch
 
-        # Final displacement build. Multiply order kept identical to the
-        # original (delta_k * inv_k2_bias, then k_i, then +i) so this stays
-        # bit-for-bit and the analytic/GRF tolerances (1e-6) are unaffected.
+        # Converged density -> displacement psi = grad(phi), phi = delta/(bias k^2).
         host_displacement = np.empty(delta.shape + (3,), dtype=delta.dtype)
         for i in range(3):
             np.multiply(delta_k, inv_k2_bias, out=tmp_k)
@@ -181,9 +199,7 @@ class FFTSolverCPU(PoissonSolver):
 
             inv_k2 = build_inv_k2((kx, ky, kz))
 
-            # phi_k = sum_i (i k_i / k^2) psi_k_i, accumulated one component at a
-            # time; the first transform doubles as the accumulator so no extra
-            # zeroed grid is allocated.
+            # Potential from the displacement: phi_k = i k.psi_k / k^2.
             phi_k = None
             for i in range(3):
                 psi_k_comp = sfft.rfftn(self.displacement[..., i], workers=-1)
