@@ -61,7 +61,7 @@ class Mesh:
         self.nmesh = self._normalize_nmesh(self.nmesh)
         self.boxsize = self._normalize_boxsize(self.boxsize)
 
-        self.boxcentre = np.asarray(self.boxcentre, dtype=np.float64)
+        self.boxcentre = np.asarray(self.boxcentre, dtype=np.float32)
         if self.boxcentre.shape != (3,):
             raise ValueError("boxcentre must be a length-3 array-like of coordinates")
 
@@ -78,9 +78,9 @@ class Mesh:
 
     @staticmethod
     def _normalize_boxsize(boxsize) -> np.ndarray:
-        arr = np.asarray(boxsize, dtype=np.float64)
+        arr = np.asarray(boxsize, dtype=np.float32)
         if arr.ndim == 0:
-            arr = np.full(3, float(arr), dtype=np.float64)
+            arr = np.full(3, float(arr), dtype=np.float32)
         elif arr.shape != (3,):
             raise ValueError("boxsize must be a scalar or a length-3 array-like")
         return arr
