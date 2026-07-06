@@ -55,6 +55,7 @@ except Exception:  # pragma: no cover - cupy not installed
 # Canonical column order for every CSV the suite produces.
 #   memory_peak_mb  -- memory attributable to the step (RSS delta / GPU pool delta)
 #   memory_total_mb -- absolute peak of the whole process (RSS / GPU pool usage)
+#   vram_peak_mb    -- GPU device-memory peak (CuPy pool high-water); 0.0 on CPU
 CSV_COLUMNS: Tuple[str, ...] = (
     "backend",
     "n_particles",
@@ -64,6 +65,7 @@ CSV_COLUMNS: Tuple[str, ...] = (
     "time_std",
     "memory_peak_mb",
     "memory_total_mb",
+    "vram_peak_mb",
 )
 
 # Default cubic box side (Mpc/h) used by the box-based benchmarks.
@@ -169,6 +171,7 @@ class Measurement:
     time_std: float
     memory_peak_mb: float   # memory used by the step (peak RSS delta around it)
     memory_total_mb: float  # absolute peak RSS of the whole process
+    vram_peak_mb: float = 0.0  # GPU device-memory peak (CuPy pool high-water); 0.0 on CPU
 
     def as_row(self, backend: str, n_particles: int, nmesh: int, step: str) -> Dict[str, object]:
         return {
@@ -180,6 +183,7 @@ class Measurement:
             "time_std": self.time_std,
             "memory_peak_mb": self.memory_peak_mb,
             "memory_total_mb": self.memory_total_mb,
+            "vram_peak_mb": self.vram_peak_mb,
         }
 
 
@@ -260,6 +264,13 @@ def measure(fn: Callable[[], object], repeats: int = 5, warmup: bool = True,
         result = fn()
         _sync(device)
         used_after = pool.used_bytes()
+        # VRAM peak: the pool only returns memory to the device on
+        # free_all_blocks(), so total_bytes() = used + cached-free tracks the
+        # largest footprint the pool reached during the run -- the true peak of
+        # CuPy allocations, unlike used_bytes() which only sees what is still
+        # live at this instant. (Non-pool allocations -- cuFFT plan scratch,
+        # numba device arrays -- are not pooled and thus not counted here.)
+        vram_peak_mb = pool.total_bytes() / 1e6
         del result
         pool.free_all_blocks()
         memory_step_mb = (used_after - baseline) / 1e6
@@ -271,12 +282,14 @@ def measure(fn: Callable[[], object], repeats: int = 5, warmup: bool = True,
         # ru_maxrss is in KiB on Linux -> divide by 1024 for MiB.
         memory_step_mb = max(0.0, (rss_after_kb - _memory_baseline_kb()) / 1024.0)
         memory_total_mb = rss_after_kb / 1024.0
+        vram_peak_mb = 0.0
 
     return Measurement(
         time_mean=float(np.mean(times)),
         time_std=float(np.std(times)),
         memory_peak_mb=float(memory_step_mb),
         memory_total_mb=float(memory_total_mb),
+        vram_peak_mb=float(vram_peak_mb),
     )
 
 
@@ -404,7 +417,7 @@ def print_table(rows: Sequence[Dict[str, object]], title: str = "") -> None:
             return "-"
         if col in ("time_mean", "time_std"):
             return f"{float(value):.4e}"
-        if col in ("memory_peak_mb", "memory_total_mb"):
+        if col in ("memory_peak_mb", "memory_total_mb", "vram_peak_mb"):
             return f"{float(value):.1f}"
         if col == "n_particles":
             return f"{int(value):.0e}" if int(value) >= 1000 else str(int(value))
