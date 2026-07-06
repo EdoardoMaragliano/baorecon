@@ -79,42 +79,6 @@ def _make_mock_xyz(n):
     random_xyz, _ = radec_z_to_xyz(r_ra, r_dec, r_z, cosmo=cosmo)
     return data_xyz, random_xyz
 
-'''def _worker_baorecon(n, nmesh, device, repeats, solver_type, mas_parallel):
-    from baorecon.reconstruction.bao_reconstructor import BAOReconstructor
-
-    backend = f"baorecon_{device}"
-    data_xyz, random_xyz = _make_mock_xyz(n)
-    weights_d = np.ones(len(data_xyz), dtype=np.float32)
-    weights_r = np.ones(len(random_xyz), dtype=np.float32)
-    
-    # 1. Compute the cubic box EXACTLY as pyrecon does,
-    # using the padding as a percentage (2%) and without wasting RAM.
-    lo = np.minimum(data_xyz.min(axis=0), random_xyz.min(axis=0))
-    hi = np.maximum(data_xyz.max(axis=0), random_xyz.max(axis=0))
-    
-    boxcentre = (lo + hi) / 2.0
-    boxsize = float((hi - lo).max()) * (1.0 + PADDING)
-
-    bc.reset_memory_baseline()
-
-    def run():
-        recon = BAOReconstructor(
-            data_pos=data_xyz, random_pos=random_xyz,
-            data_weights=weights_d, random_weights=weights_r,
-            RSDspace="RedshiftSpace", nmesh=nmesh, 
-            boxsize=boxsize,           # Pass the padded cubic box explicitly
-            boxcentre=boxcentre,       # Pass the box centre explicitly
-            padding=0.0,               # Ignored: the box is already padded
-            los=None, R_sm=R_SMOOTH, pbc=False, rectype="rec-sym", 
-            f=F_GROWTH, bias=BIAS, MAS="CIC", dtype=np.float32, 
-            solver_type=solver_type, device=device, mas_parallel=mas_parallel, smoother='jacobi'
-        )
-        return recon.run_reconstruction()
-
-    m = bc.safe_measure(run, label=f"{backend} N={n:.0e}",
-                        repeats=repeats, device=device)
-    return [m.as_row(backend, n, nmesh, "total")] if m is not None else []
-'''
 
 def _worker_baorecon(n, nmesh, device, repeats, solver_type, mas_parallel, smoother):
     from baorecon.reconstruction.bao_reconstructor import BAOReconstructor
@@ -234,7 +198,7 @@ def worker(spec):
 # ---------------------------------------------------------------------------
 # Parent side (orchestration only -- no baorecon / pyrecon imports)
 # ---------------------------------------------------------------------------
-def run(n_particles, nmeshes, repeats, solver, mas_parallel, smoother, fft):
+def run(n_particles, nmeshes, repeats, solver, mas_parallel, smoother, fft, skip_pyrecon=False):
     info = bc.system_info()
     # Stamp the run-constant knobs into the CSV provenance header (they are
     # single-valued per invocation, so they live here + in the filename rather
@@ -254,7 +218,9 @@ def run(n_particles, nmeshes, repeats, solver, mas_parallel, smoother, fft):
     backends = ["baorecon_cpu"]
     if bc.GPU_AVAILABLE and solver == "ifft":
         backends.append("baorecon_gpu")
-    backends.append("pyrecon")
+    if not skip_pyrecon:
+        backends.append("pyrecon")
+    
 
     # The FFT backend only affects the CPU ifft path; warn when it cannot take
     # effect so a 'pyfftw' request on multigrid/GPU is not silently ignored.
@@ -296,7 +262,7 @@ def main():
     parser.add_argument("--quick", action="store_true",
                         help="small parameter set for a fast sanity run")
     parser.add_argument("--repeats", type=int, default=1,
-                        help="number of timed repetitions (default 5)")
+                        help="number of timed repetitions (default 1)")
     parser.add_argument("--solver", type=str, choices=["multigrid", "ifft"],
                         default='multigrid', help="either multigrid or ifft")
     parser.add_argument("--smoother", type=str, choices=["jacobi", "mcgs"],
@@ -308,6 +274,7 @@ def main():
                         help="CPU FFT backend (BAORECON_FFT); only affects the cpu ifft solver.")
     parser.add_argument("--mas_parallel", action="store_true",
                         help="Enable parallel mass assignment in baorecon")
+    parser.add_argument("--skip_pyrecon", action="store_true")
     parser.add_argument('--debug', action="store_true")
     parser.add_argument("--worker", type=str, help="Internal use by bench_common")
 
@@ -334,10 +301,10 @@ def main():
 
     if args.quick:
         run([int(1e4), int(1e5)], [64], repeats=max(2, args.repeats), solver=args.solver,
-            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft)
+            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft, skip_pyrecon=args.skip_pyrecon)
     else:
         run(N_PARTICLES, NMESH, repeats=args.repeats, solver=args.solver,
-            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft)
+            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft, skip_pyrecon=args.skip_pyrecon)
 
 
 if __name__ == "__main__":
