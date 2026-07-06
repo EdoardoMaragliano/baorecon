@@ -13,6 +13,7 @@ os.environ["OMP_NUM_THREADS"] = THREADS
 os.environ["MKL_NUM_THREADS"] = THREADS
 os.environ["OPENBLAS_NUM_THREADS"] = THREADS
 os.environ["NUMEXPR_NUM_THREADS"] = THREADS
+os.environ["BAORECON_FFT_THREADS"] = THREADS
 
 import argparse
 import shutil
