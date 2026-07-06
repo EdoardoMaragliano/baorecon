@@ -5,6 +5,41 @@ All notable changes to this project are documented here.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- Streamed radial (`LocalLOS`) projection promoted to shared infrastructure in
+  `baorecon/solvers/fft/_radial_stream.py`: the per-cell radial versor
+  `n̂ = x/|x|` is evaluated on the fly and the potential gradient is projected and
+  scattered one component at a time, so the full `(N, N, N, 3)` gradient / versor /
+  parallel-field grids are never held in memory at once. It is now used by the
+  **default scipy CPU solver** and the **GPU solver** (via CuPy `ElementwiseKernel`
+  twins), not only the opt-in pyfftw backend — lowering peak memory on the radial
+  line of sight for every backend. Cross-implementation parity (numba vs numpy vs
+  CuPy) is guarded by `tests/test_radial_kernels.py`.
+- Benchmark: `bench_bao_reconstructor.py` gained `--smoother {jacobi,mcgs}`
+  (multigrid smoother: Jacobi V-cycle or multicolor Gauss–Seidel) and
+  `--fft {scipy,pyfftw}` (selects the CPU ifft FFT backend via `BAORECON_FFT`),
+  and now warns when `--fft pyfftw` cannot take effect (multigrid / GPU).
+- Benchmark: all CSVs gained a `vram_peak_mb` column — the CuPy memory-pool
+  high-water mark (`total_bytes()`) on GPU, `0.0` on CPU / pyrecon — tracked once
+  in the shared `bench_common.measure()` primitive.
+
+### Changed
+- `divergence_inplace` → `divergence_from_components` in
+  `baorecon/solvers/fft/_common.py`: it now takes a `get_component(i)` callback so
+  each gradient component can be synthesised lazily by the caller.
+- `Mesh` stores `boxsize` / `boxcentre` at the working precision (float32) and
+  `LocalLOS` exposes a float32 `cell_size`, so the on-the-fly radial versor matches
+  the cached versor grid cell for cell.
+
+### Fixed
+- Benchmark: the `bench_bao_reconstructor.py` `smoother` argument was passed as a
+  bare kwarg that `BAOReconstructor(**kwargs)` silently swallowed and never reached
+  the solver; it is now threaded through `solver_args`. GPU VRAM tracking also
+  called a non-existent `MemoryPool.max_bytes()` (crashing the GPU worker) and
+  stored the result in a column `save_csv` dropped; both are resolved.
+
 ## [0.4.0] - 2026-07-03
 
 ### Added
@@ -33,4 +68,5 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reused a previous pipeline allocation.
 - `resolve_format` now raises clear errors for an unknown format or extension.
 
+[Unreleased]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.4.0...HEAD
 [0.4.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.4.0
