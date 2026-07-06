@@ -9,6 +9,14 @@ projection (the radial versor is evaluated on the fly), it **cuts the end-to-end
 CPU peak memory by ~55–60%** — bringing baorecon in line with `pyrecon` — with no
 change to results beyond float32 round-off.
 
+> **Note.** The streamed radial (`LocalLOS`) projection has since been promoted to
+> shared infrastructure (`baorecon/solvers/fft/_radial_stream.py`) and is now used
+> by the **default scipy solver** and the **GPU solver** too — not only this pyfftw
+> path. So the pyfftw-*exclusive* saving is the in-place transforms; the streamed
+> projection lowers the radial-LOS peak on every backend. The measured tables below
+> were taken when streaming was pyfftw-only and predate that change (see
+> [Measured results](#measured-results)).
+
 scipy remains the default. The pyfftw path is enabled entirely through
 environment variables — no change to the reconstructor, pipeline, or any call
 site is required.
@@ -161,27 +169,31 @@ rm ~/.cache/baorecon/fftw_wisdom.pkl
 ## Running the benchmark
 
 `benchmarks/bench_bao_reconstructor.py` sweeps the full reconstruction. To run it
-against the in-place backend:
+against the in-place backend, either export `BAORECON_FFT` or use the
+`--fft pyfftw` flag (which sets it for you):
 
 ```bash
 BAORECON_FFT=pyfftw python benchmarks/bench_bao_reconstructor.py --solver ifft
+# equivalently:
+python benchmarks/bench_bao_reconstructor.py --solver ifft --fft pyfftw
 ```
 
 Notes:
 
 - **`--solver ifft` is required.** pyfftw is the in-place path *inside the FFT
-  solver*; `--solver multigrid` never touches it.
+  solver*; `--solver multigrid` never touches it (the script warns if you combine
+  `--fft pyfftw` with multigrid or a GPU backend).
 - Only the **`baorecon_cpu`** rows are affected. `baorecon_gpu` uses CuPy and
   `pyrecon` uses its own FFTs.
 - The environment variable is inherited by each per-config worker subprocess
-  (`bench_common.spawn_worker` copies `os.environ`), so setting it once in the
-  launching shell is enough.
+  (`bench_common.spawn_worker` copies `os.environ`); with `--fft` the worker sets
+  it itself. Either way, one invocation is enough.
 - The default `NMESH` includes **1024³**, which is large (~63 GB with scipy,
   ~27 GB with pyfftw) and slow. To restrict the sweep without editing the file:
 
   ```bash
   BAORECON_FFT=pyfftw python -c \
-    "import bench_bao_reconstructor as b; b.run([int(1e6)], [256,512], repeats=3, solver='ifft', mas_parallel=False)"
+    "import bench_bao_reconstructor as b; b.run([int(1e6)], [256,512], repeats=3, solver='ifft', mas_parallel=False, smoother='jacobi', fft='pyfftw')"
   ```
   (run from the `benchmarks/` directory).
 
@@ -213,6 +225,16 @@ is in `FFTSolverCPU._compute_displacement_iterative_potential`.
 ---
 
 ## Measured results
+
+> **Caveat (superseded baseline).** These numbers were measured when the streamed
+> radial projection was exclusive to the pyfftw path — the `scipy` columns are the
+> *pre-streaming* scipy solver. The streamed projection has since been promoted to
+> the default scipy solver (and the GPU solver) via
+> `baorecon/solvers/fft/_radial_stream.py`, so today's scipy radial-LOS peak is
+> already much lower than the `scipy` column here; the remaining pyfftw-exclusive
+> saving is the in-place transforms. Treat the tables as illustrating the
+> in-place + streaming win over a non-streaming scipy baseline, pending a refreshed
+> measurement pass.
 
 Single-node measurements (AMD EPYC, all cores). `R` = one float32 grid = `N³·4 B`
 (512³ → 512 MiB).
@@ -298,11 +320,15 @@ changes.
 
 Relevant files:
 
-- `baorecon/solvers/fft/_pyfftw_cpu.py` — the in-place implementation, numba
-  kernels, wisdom persistence, and env-var knobs.
+- `baorecon/solvers/fft/_pyfftw_cpu.py` — the in-place implementation, wisdom
+  persistence, and env-var knobs.
+- `baorecon/solvers/fft/_radial_stream.py` — the streamed radial-LOS projection
+  numba kernels (versor on the fly), shared with the default scipy path.
+- `baorecon/solvers/fft/_common.py` — `divergence_from_components`, the lazy
+  per-component divergence used by the streamed projection.
 - `baorecon/utils/backend.py` — `PYFFTW_AVAILABLE`, `use_pyfftw()`.
 - `baorecon/solvers/fft/cpu.py` — routes to the in-place path when enabled and
-  supported, else scipy.
+  supported, else scipy (which also streams the radial projection).
 
 ---
 
