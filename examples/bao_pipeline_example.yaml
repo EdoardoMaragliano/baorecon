@@ -73,8 +73,8 @@ reconstruction:
   bias: 1.7
   MAS: "CIC"
   threshold_randoms: 0.7
-  solver_type: "ifft"
-  n_iterations: 3
+  solver_type: "ifft"     # or multigrid
+  # n_iterations: 3
   # Working floating-point precision for catalogs and mesh: "float32" (default)
   # or "float64". float32 roughly halves memory use; float64 is opt-in.
   # dtype: float32
