@@ -143,6 +143,78 @@ downcasts float64 inputs to the working precision automatically; pass
 `dtype=np.float64` (or set `reconstruction.dtype: float64` in the pipeline YAML)
 to opt into double precision end-to-end.
 
+## Multithreading
+
+The CPU reconstruction is parallel throughout: the heavy mesh kernels (mass
+assignment, interpolation, divergence, multigrid smoothers, radial projection)
+are `numba` `@njit(parallel=True)` loops, the FFTs run multithreaded, and NumPy
+delegates to a threaded BLAS. Each of these has its **own** thread pool governed
+by an environment variable — there is no single baorecon flag.
+
+| Variable | Controls | Default if unset |
+|---|---|---|
+| `NUMBA_NUM_THREADS` | numba JIT kernels (MAS, interpolation, divergence, multigrid) | all cores |
+| `OMP_NUM_THREADS` | OpenMP-based BLAS / library threads | all cores |
+| `OPENBLAS_NUM_THREADS`, `MKL_NUM_THREADS` | NumPy linear-algebra BLAS backend | all cores |
+| `NUMEXPR_NUM_THREADS` | numexpr, if present | all cores |
+| `BAORECON_FFT_THREADS` | FFTW threads (only when `BAORECON_FFT=pyfftw`) | all cores |
+
+Notes:
+
+- The **default scipy FFT** always runs on all cores (`workers=-1`) and is not
+  capped by any of these variables. To bound FFT threads, use the optional
+  `pyfftw` backend (`BAORECON_FFT=pyfftw` + `BAORECON_FFT_THREADS`); see
+  [docs/pyfftw_backend.md](docs/pyfftw_backend.md).
+- On `device="gpu"` these variables are irrelevant (work runs on the GPU).
+
+### ⚠️ Set them *before* importing anything
+
+All of these are read **once, at import/startup time** (`NUMBA_NUM_THREADS` when
+`numba` is imported, the BLAS caps when NumPy loads its backend). Setting them
+after `import numpy` / `import baorecon` has **no effect**. There are three safe
+ways to do it — pick one:
+
+**1. Inline, in front of the command (recommended for one-off runs):**
+
+```bash
+OMP_NUM_THREADS=8 OPENBLAS_NUM_THREADS=8 MKL_NUM_THREADS=8 \
+NUMBA_NUM_THREADS=8 python your_run.py
+```
+
+**2. `export` in the shell / job script (e.g. a SLURM submit script):**
+
+```bash
+export OMP_NUM_THREADS=8
+export OPENBLAS_NUM_THREADS=8
+export MKL_NUM_THREADS=8
+export NUMBA_NUM_THREADS=8
+# export BAORECON_FFT=pyfftw BAORECON_FFT_THREADS=8   # optional pyfftw path
+python your_run.py
+```
+
+**3. `os.environ` at the very top of your script — before any scientific import:**
+
+```python
+import os
+THREADS = "8"
+os.environ["NUMBA_NUM_THREADS"]    = THREADS
+os.environ["OMP_NUM_THREADS"]      = THREADS
+os.environ["OPENBLAS_NUM_THREADS"] = THREADS
+os.environ["MKL_NUM_THREADS"]      = THREADS
+os.environ["NUMEXPR_NUM_THREADS"]  = THREADS
+# os.environ["BAORECON_FFT_THREADS"] = THREADS   # optional pyfftw path
+
+import numpy as np                 # imports MUST come AFTER the lines above
+from baorecon import BAOReconstructor
+```
+
+(The scripts in `benchmarks/` use this last pattern — see the header of
+[benchmarks/bench_bao_reconstructor.py](benchmarks/bench_bao_reconstructor.py).)
+
+Leaving the variables unset lets every backend use all available cores, which is
+usually what you want on a dedicated node; set them explicitly on shared or
+SLURM-managed machines to stay within your allocation.
+
 ## Installation
 
 You can install dependencies by scope.
