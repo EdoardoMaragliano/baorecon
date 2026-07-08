@@ -314,9 +314,10 @@ Two independent memory savings combine:
 For a fixed axis the projection reduces to a single component, so the iteration
 uses just the padded buffer plus `delta` and `1/(bias·k²)`.
 
-The returned displacement is a contiguous `(N, N, N, 3)` float32 array — the
-layout the reconstructor's interpolation kernels require — so nothing downstream
-changes.
+The returned displacement is a contiguous `(N, N, N, 3)` array in the delta's
+working precision (float32 by default, float64 when the mesh is double precision)
+— the layout the reconstructor's interpolation kernels require — so nothing
+downstream changes.
 
 Relevant files:
 

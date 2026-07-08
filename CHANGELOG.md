@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-07-08
+
 ### Added
 - Streamed radial (`LocalLOS`) projection promoted to shared infrastructure in
   `baorecon/solvers/fft/_radial_stream.py`: the per-cell radial versor
@@ -29,11 +31,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `divergence_inplace` → `divergence_from_components` in
   `baorecon/solvers/fft/_common.py`: it now takes a `get_component(i)` callback so
   each gradient component can be synthesised lazily by the caller.
-- `Mesh` stores `boxsize` / `boxcentre` at the working precision (float32) and
-  `LocalLOS` exposes a float32 `cell_size`, so the on-the-fly radial versor matches
-  the cached versor grid cell for cell.
+- `Mesh` stores `boxsize` / `boxcentre` (and the derived `cell_size` / `min_corner`)
+  at the mesh's working precision (`dtype`) instead of pinning them to float32, so a
+  float64 mesh keeps float64 geometry. The default float32 mode is unchanged, and
+  `LocalLOS` still exposes a float32 `cell_size` so the on-the-fly radial versor
+  matches the cached versor grid cell for cell in float32.
+- CPU mass assignment / read-out now handle the non-periodic (`pbc=False`) box edge
+  uniformly by **clamping** out-of-range stencil cells to the nearest boundary cell
+  (mass-conserving) across every scheme (NGP / CIC / TSC) and both the serial and
+  parallel kernels. Previously the parallel CIC/TSC kernels and `tsc_read` *dropped*
+  those contributions, so `pbc=False` results near the box edge change slightly:
+  mass is now conserved and paint/read stay mutual adjoints at the boundary.
 
 ### Fixed
+- CPU mass assignment / read-out are now type-neutral instead of forcing float32:
+  the interface allocates the grid at the mesh's working precision and casts
+  positions / weights to match, so a `dtype=float64` run is honoured end-to-end
+  rather than silently downcast during painting (the accumulation happened in
+  float32 even when the surrounding pipeline was float64). The GPU path stays
+  float32 by design.
+- The iterative FFT (iFFT / Burden) CPU solver honours the working precision: the
+  wavevectors (scipy and pyfftw paths) and the pyfftw in-place buffers / outputs now
+  follow the delta dtype (float32/complex64 or float64/complex128), so a float64
+  reconstruction stays float64 through the solver instead of round-tripping through
+  float32. `prepare_k_components` also accepts a `numpy.dtype` instance, not only a
+  type. (The radial `LocalLOS` versor geometry remains float32.)
+- `tsc_assign_serial` silently ignored its `pbc` argument and always wrapped
+  periodically; it now honours `pbc` (periodic wrap when true, boundary clamp when
+  false), matching the other kernels and `tsc_read`.
+- `cic_assign_serial` and `cic_read` used truncation (`int()`) for the cell index,
+  which produced negative CIC weights for negative positions under PBC; they now use
+  `floor`. Not reachable through the pipeline (positions are pre-wrapped to
+  `[0, boxsize)`), but wrong for direct `assign` / `readout` calls.
 - Benchmark: the `bench_bao_reconstructor.py` `smoother` argument was passed as a
   bare kwarg that `BAOReconstructor(**kwargs)` silently swallowed and never reached
   the solver; it is now threaded through `solver_args`. GPU VRAM tracking also

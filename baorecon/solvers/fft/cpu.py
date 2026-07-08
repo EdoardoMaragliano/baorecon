@@ -54,7 +54,11 @@ class FFTSolverCPU(PoissonSolver):
         pure waste).
         """
         if self._k_host is None:
-            self._k_host = prepare_k_components(self.mesh.cell_size, self.mesh.nmesh)
+            # Build the wavevectors at the mesh's working precision so a float64
+            # mesh yields float64 k (and hence a float64 potential/displacement).
+            self._k_host = prepare_k_components(
+                self.mesh.cell_size, self.mesh.nmesh, dtype=self.mesh.dtype
+            )
         return self._k_host
 
     def _compute_displacement_mesh(self) -> None:

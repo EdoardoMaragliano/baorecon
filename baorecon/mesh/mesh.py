@@ -59,9 +59,12 @@ class Mesh:
         self.dtype = np.dtype(self.dtype)
 
         self.nmesh = self._normalize_nmesh(self.nmesh)
-        self.boxsize = self._normalize_boxsize(self.boxsize)
+        self.boxsize = self._normalize_boxsize(self.boxsize, self.dtype)
 
-        self.boxcentre = np.asarray(self.boxcentre, dtype=np.float32)
+        # Geometry follows the mesh's working precision: a float64 mesh keeps a
+        # float64 box (and, via the derivations below, float64 cell_size /
+        # min_corner) instead of being silently pinned to float32.
+        self.boxcentre = np.asarray(self.boxcentre, dtype=self.dtype)
         if self.boxcentre.shape != (3,):
             raise ValueError("boxcentre must be a length-3 array-like of coordinates")
 
@@ -77,10 +80,10 @@ class Mesh:
         return format_nmesh(nmesh)
 
     @staticmethod
-    def _normalize_boxsize(boxsize) -> np.ndarray:
-        arr = np.asarray(boxsize, dtype=np.float32)
+    def _normalize_boxsize(boxsize, dtype=np.float32) -> np.ndarray:
+        arr = np.asarray(boxsize, dtype=dtype)
         if arr.ndim == 0:
-            arr = np.full(3, float(arr), dtype=np.float32)
+            arr = np.full(3, arr, dtype=dtype)
         elif arr.shape != (3,):
             raise ValueError("boxsize must be a scalar or a length-3 array-like")
         return arr

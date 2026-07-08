@@ -12,14 +12,16 @@ import numpy as np
 
 def prepare_k_components(cell_size, nmesh, dtype=np.float32):
     """Return the three 1D wavevector arrays (kx, ky, kz)."""
+    # Accept either a dtype instance (e.g. ``mesh.dtype``) or a type (np.float32).
+    dtype = np.dtype(dtype)
     cell_size = np.broadcast_to(np.asarray(cell_size, dtype=dtype), (3,))
     nmesh = np.asarray(nmesh)
     if nmesh.ndim == 0:
         nmesh = np.full(3, int(nmesh), dtype=np.int64)
 
     # np.fft.fftfreq returns float64 by default.
-    # Multiply by 2*pi and immediately cast to the desired dtype (float32).
-    two_pi = dtype(2 * np.pi)
+    # Multiply by 2*pi and immediately cast to the desired dtype.
+    two_pi = dtype.type(2 * np.pi)
     kx = (np.fft.fftfreq(int(nmesh[0]), d=cell_size[0]) * two_pi).astype(dtype)
     ky = (np.fft.fftfreq(int(nmesh[1]), d=cell_size[1]) * two_pi).astype(dtype)
     kz = (np.fft.rfftfreq(int(nmesh[2]), d=cell_size[2]) * two_pi).astype(dtype)

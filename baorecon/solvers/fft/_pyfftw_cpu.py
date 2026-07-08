@@ -11,8 +11,10 @@ gradient grid is materialised) it roughly halves the CPU peak.
 Only the two line-of-sight strategies the reconstructor actually builds are
 supported here -- a fixed axis (``FixedAxisLOS.axis``) and a radial
 ``LocalLOS`` (via ``radial_versor``); the caller falls back to scipy otherwise.
-Results match the scipy path to float32 round-off. The potential recompute is
-left on the scipy path (cold code, needs the already-computed displacement).
+The path is type-neutral: buffers, wavevectors and outputs follow the delta's
+working precision (float32/complex64 or float64/complex128), and results match
+the scipy path to that precision's round-off. The potential recompute is left on
+the scipy path (cold code, needs the already-computed displacement).
 """
 
 import os
@@ -140,14 +142,18 @@ class _InPlaceRFFT:
     plans over its full shape. ``real_view`` is the logical (nx,ny,nz) real view
     and ``complex_view`` the (nx,ny,nz//2+1) complex view of the *same* memory."""
 
-    def __init__(self, shape, threads, flags=None):
+    def __init__(self, shape, threads, flags=None, dtype=np.float32):
         nx, ny, nz = (int(n) for n in shape)
         n_complex = nz // 2 + 1
         flags = flags or _plan_flags()
         plan_time_limit = _plan_timelimit()
-        self.buffer = pyfftw.empty_aligned((nx, ny, 2 * n_complex), dtype="float32")
+        # Real<->complex dtype pair follows the working precision: float32/complex64
+        # by default, float64/complex128 when a double-precision mesh is used.
+        real_dtype = np.dtype(dtype)
+        complex_dtype = np.complex64 if real_dtype == np.float32 else np.complex128
+        self.buffer = pyfftw.empty_aligned((nx, ny, 2 * n_complex), dtype=real_dtype)
         self.real_view = self.buffer[:, :, :nz]
-        self.complex_view = self.buffer.view("complex64")
+        self.complex_view = self.buffer.view(complex_dtype)
         _load_wisdom()
         self.forward = pyfftw.FFTW(self.real_view, self.complex_view, axes=(0, 1, 2), direction="FFTW_FORWARD",
                                    flags=flags, threads=threads, planning_timelimit=plan_time_limit)
@@ -178,16 +184,20 @@ def displacement_inplace(delta, mesh, los, f, bias, beta, n_iterations):
     Same physics as :meth:`FFTSolverCPU._compute_displacement_iterative_potential`
     (potential -> gradient -> LOS projection -> divergence -> Burden update, then
     psi = grad(phi)), but every transform reuses a single padded buffer. Returns an
-    ``(N,N,N,3)`` float32 array (the layout the interpolation kernels require).
+    ``(N,N,N,3)`` array in the delta's working precision (the layout the
+    interpolation kernels require).
     """
-    delta = np.ascontiguousarray(delta, dtype=np.float32)
+    # Stay type-neutral: follow the delta's floating precision instead of pinning
+    # the whole path (buffers, wavevectors, outputs) to float32.
+    work_dtype = np.dtype(delta.dtype)
+    delta = np.ascontiguousarray(delta, dtype=work_dtype)
     shape = delta.shape
-    kx, ky, kz = prepare_k_components(mesh.cell_size, mesh.nmesh)
+    kx, ky, kz = prepare_k_components(mesh.cell_size, mesh.nmesh, dtype=work_dtype)
     k_broadcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
     inv_k2_bias = build_inv_k2((kx, ky, kz), bias=bias)   # (N,N,nc) real
 
     axis = getattr(los, "axis", None)
-    fft = _InPlaceRFFT(shape, threads=_threads())
+    fft = _InPlaceRFFT(shape, threads=_threads(), dtype=work_dtype)
     real_view, complex_view = fft.real_view, fft.complex_view
 
     real_view[...] = delta
@@ -198,7 +208,7 @@ def displacement_inplace(delta, mesh, los, f, bias, beta, n_iterations):
         # in-place divergence accumulation.
         min_corner = los.min_corner
         cell_size = los.cell_size
-        los_magnitude = np.empty(shape, dtype=np.float32)       # s = grad . n_hat
+        los_magnitude = np.empty(shape, dtype=work_dtype)       # s = grad . n_hat
         delta_k_saved = np.empty_like(complex_view)
         divergence_accum = np.empty_like(complex_view)
 
@@ -250,7 +260,7 @@ def displacement_inplace(delta, mesh, los, f, bias, beta, n_iterations):
     # Converged density -> displacement psi = grad(phi). delta_k is copied out of
     # the shared buffer once, since each component reloads it.
     delta_k = np.array(complex_view, copy=True)
-    displacement = np.empty(shape + (3,), dtype=np.float32)
+    displacement = np.empty(shape + (3,), dtype=work_dtype)
     for component in range(3):
         complex_view[...] = delta_k
         complex_view *= inv_k2_bias
