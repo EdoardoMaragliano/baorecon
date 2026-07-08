@@ -27,6 +27,11 @@ recon = BAOReconstructor(
 data_rec, random_rec = recon.run_reconstruction()
 ```
 
+For a hands-on, end-to-end walkthrough — building a mock catalogue, running
+`BAOReconstructor`, and inspecting the overdensity, potential and displacement
+fields — see the annotated notebook
+[../../examples/bao_reconstructor_walkthrough.ipynb](../../examples/bao_reconstructor_walkthrough.ipynb).
+
 ## Positions must be in Cartesian coordinates
 
 `data_pos` and `random_pos` are `(N, 3)` arrays of **Cartesian coordinates**

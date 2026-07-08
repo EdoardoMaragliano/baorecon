@@ -37,6 +37,11 @@ At a high level, the reconstruction works like this:
 
 ## Basic usage
 
+For a hands-on, end-to-end walkthrough — generating a mock catalog, running
+`BAOReconstructor`, and inspecting the overdensity, potential and displacement
+fields — see the annotated notebook
+[examples/bao_reconstructor_walkthrough.ipynb](examples/bao_reconstructor_walkthrough.ipynb).
+
 ### High-level reconstruction
 
 The quickest entry point is the functional API:
