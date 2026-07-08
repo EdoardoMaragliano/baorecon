@@ -36,12 +36,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   float64 mesh keeps float64 geometry. The default float32 mode is unchanged, and
   `LocalLOS` still exposes a float32 `cell_size` so the on-the-fly radial versor
   matches the cached versor grid cell for cell in float32.
-- CPU mass assignment / read-out now handle the non-periodic (`pbc=False`) box edge
+- Mass assignment / read-out now handle the non-periodic (`pbc=False`) box edge
   uniformly by **clamping** out-of-range stencil cells to the nearest boundary cell
-  (mass-conserving) across every scheme (NGP / CIC / TSC) and both the serial and
-  parallel kernels. Previously the parallel CIC/TSC kernels and `tsc_read` *dropped*
-  those contributions, so `pbc=False` results near the box edge change slightly:
-  mass is now conserved and paint/read stay mutual adjoints at the boundary.
+  (mass-conserving) across every scheme (NGP / CIC / TSC), the serial and parallel
+  CPU kernels, and the GPU kernels. Previously the parallel CPU CIC/TSC kernels and
+  `tsc_read` *dropped* those contributions and the GPU kernels ignored `pbc` and
+  always wrapped, so `pbc=False` results near the box edge change slightly: mass is
+  now conserved and paint/read stay mutual adjoints at the boundary, identically on
+  CPU and GPU.
 
 ### Fixed
 - CPU mass assignment / read-out are now type-neutral instead of forcing float32:
@@ -63,6 +65,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   which produced negative CIC weights for negative positions under PBC; they now use
   `floor`. Not reachable through the pipeline (positions are pre-wrapped to
   `[0, boxsize)`), but wrong for direct `assign` / `readout` calls.
+- GPU mass assignment / read-out kernels now honour `pbc`. They previously took no
+  `pbc` argument and **always wrapped periodically**, so a `device="gpu", pbc=False`
+  run wrapped box-edge mass to the far side instead of clamping (diverging from the
+  CPU kernels). The four `numba.cuda` kernels now thread `pbc` (wrap when true,
+  boundary clamp when false) and use `floor` for the CIC cell index, matching
+  `baorecon.mas.cpu`. `tests/test_density_manager.py` is parametrized over
+  `pbc ∈ {True, False}` on both backends.
 - Benchmark: the `bench_bao_reconstructor.py` `smoother` argument was passed as a
   bare kwarg that `BAOReconstructor(**kwargs)` silently swallowed and never reached
   the solver; it is now threaded through `solver_args`. GPU VRAM tracking also

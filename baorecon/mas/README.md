@@ -62,8 +62,9 @@ raises.
 
 ## Boundary handling
 
-Set by `pbc` (default `True`) and applied identically by every scheme, in both the
-serial and parallel kernels and in paint and read-out:
+Set by `pbc` (default `True`) and applied identically across the CPU and GPU
+backends — by every scheme, in the serial and parallel CPU kernels, and in paint
+and read-out:
 
 - `pbc=True` -- the stencil **wraps** periodically (`% nmesh`).
 - `pbc=False` -- out-of-range stencil cells are **clamped** to the nearest boundary

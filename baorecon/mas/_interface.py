@@ -80,9 +80,9 @@ def assign(pos, weights, mesh, scheme="CIC", device="cpu", pbc=True, parallel=Fa
         mesh_dev = cp.zeros(grid_shape, dtype=cp.float32)
         boxsize_dev = cp.asarray(boxsize)
         if scheme == "CIC":
-            _gpu.assign_cic(mesh_dev, pos_dev, weights_dev, boxsize_dev)
+            _gpu.assign_cic(mesh_dev, pos_dev, weights_dev, boxsize_dev, pbc)
         elif scheme == "TSC":
-            _gpu.assign_tsc(mesh_dev, pos_dev, weights_dev, boxsize_dev)
+            _gpu.assign_tsc(mesh_dev, pos_dev, weights_dev, boxsize_dev, pbc)
         else:
             raise ValueError(f"GPU mass assignment for scheme '{scheme}' is not implemented.")
         return mesh_dev
@@ -121,9 +121,9 @@ def readout(grid, pos, mesh, scheme="CIC", device="cpu", pbc=True):
         out_dev = cp.empty((pos_dev.shape[0], grid_dev.shape[-1]), dtype=cp.float32)
         boxsize_dev = cp.asarray(mesh.boxsize, dtype=cp.float32)
         if scheme == "CIC":
-            _gpu.read_cic(grid_dev, pos_dev, boxsize_dev, out_dev)
+            _gpu.read_cic(grid_dev, pos_dev, boxsize_dev, out_dev, pbc)
         elif scheme == "TSC":
-            _gpu.read_tsc(grid_dev, pos_dev, boxsize_dev, out_dev)
+            _gpu.read_tsc(grid_dev, pos_dev, boxsize_dev, out_dev, pbc)
         else:
             raise ValueError(f"GPU read-out for scheme '{scheme}' is not implemented.")
         return out_dev.flatten() if grid_dev.shape[-1] == 1 else out_dev
