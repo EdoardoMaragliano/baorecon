@@ -18,7 +18,8 @@ benchmarks/
 ├── bench_bao_reconstructor.py # end-to-end BAOReconstructor.run_reconstruction
 ├── bench_pipeline_class.py    # ReconstructionPipeline class (per-stage + total)
 ├── bench_scaling.py           # mesh-resolution scaling (baorecon CPU vs GPU)
-├── plot_results.py            # CSV -> figures
+├── plot_results.py            # CSV -> figures (mass assignment / fft / pipeline / speedup / memory)
+├── plot_new.py                # CSV -> figures (reconstructor-focused: time + memory comparison)
 ├── results/                   # CSV output (git-ignored except .gitkeep)
 └── figures/                   # PDF output (git-ignored except .gitkeep)
 ```
@@ -49,12 +50,38 @@ python benchmarks/plot_results.py        # after the above have written CSVs
 Each `bench_*` script accepts:
 
 - `--quick` — a tiny parameter set (small N and mesh) for a fast sanity check;
-- `--repeats N` — number of timed repetitions (default **5**).
+- `--repeats N` — number of timed repetitions (default **5**, except
+  `bench_bao_reconstructor.py` and `bench_pipeline_class.py`, which default to **1**).
 
 ```bash
 python benchmarks/bench_mass_assignment.py --quick      # fast smoke run
 python benchmarks/bench_fft_solver.py --repeats 10
 ```
+
+`bench_bao_reconstructor.py` additionally accepts:
+
+- `--solver {multigrid,ifft}` — displacement solver (default `multigrid`);
+- `--smoother {jacobi,mcgs}` — multigrid smoother, Jacobi V-cycle or multicolor
+  Gauss–Seidel (default `jacobi`; ignored by `--solver ifft`);
+- `--fft {scipy,pyfftw}` — CPU FFT backend for the ifft solver, wired through the
+  `BAORECON_FFT` environment flag (default `scipy`; only affects the CPU ifft path,
+  and warns when combined with multigrid / GPU). See
+  [../docs/pyfftw_backend.md](../docs/pyfftw_backend.md);
+- `--mas_parallel` — enable parallel mass assignment;
+- `--skip_pyrecon` — drop the `pyrecon` backend from the sweep (baorecon-only run).
+
+The `baorecon_gpu` backend is only included for `--solver ifft` (the multigrid
+solver runs on CPU regardless of `device`), so a `--solver multigrid` run compares
+`baorecon_cpu` against `pyrecon` only.
+
+```bash
+python benchmarks/bench_bao_reconstructor.py --quick --solver multigrid --smoother mcgs
+python benchmarks/bench_bao_reconstructor.py --solver ifft --fft pyfftw
+```
+
+The output CSV filename encodes the variant, e.g.
+`results/bao_reconstructor_multigrid_mcgs[_gpu].csv` or
+`results/bao_reconstructor_ifft_pyfftw[_gpu].csv`.
 
 > **Heavy configurations.** The full sweeps include very demanding points:
 > `1e8` particles (mass assignment / pipeline) and `nmesh=2048` (scaling). The
@@ -67,10 +94,10 @@ python benchmarks/bench_fft_solver.py --repeats 10
 | Script | Sweep | Fixed | Backends | `step` values |
 |---|---|---|---|---|
 | `bench_mass_assignment.py` | N = 1e5…1e8 | nmesh = 256 | baorecon CPU/GPU, pyrecon | `CIC`, `TSC` |
-| `bench_fft_solver.py` | nmesh = 256/512/1024 | N = 1e6 | baorecon CPU/GPU, pyrecon | `setup`, `solve`, `readout` |
-| `bench_bao_reconstructor.py` | nmesh = 256/512 | N = 1e6 | baorecon CPU/GPU, pyrecon | `total` |
-| `bench_pipeline_class.py` | nmesh = 256/512 | N = 1e6 | baorecon CPU/GPU | `load`, `to_xyz`, `reconstruct`, `convert_back`, `save`, `total` |
-| `bench_scaling.py` | nmesh = 128…2048 | N = 1e7 | baorecon CPU/GPU | `mass_assignment`, `fft_solver` |
+| `bench_fft_solver.py` | nmesh = 128/256/512 | N = 1e6 | baorecon CPU/GPU, pyrecon | `setup`, `solve`, `readout` |
+| `bench_bao_reconstructor.py` | nmesh = 128/256/512/1024 | N = 1e6 | baorecon CPU/GPU, pyrecon | `total` |
+| `bench_pipeline_class.py` | nmesh = 256/512/1024 | N = 1e6 | baorecon CPU/GPU | `load`, `to_xyz`, `reconstruct`, `convert_back`, `save`, `total` |
+| `bench_scaling.py` | nmesh = 128…2048 | N = 1e6 | baorecon CPU/GPU | `mass_assignment`, `fft_solver` |
 
 Backend ↔ implementation:
 
@@ -116,8 +143,12 @@ so read GPU peak memory from the `reconstruct` stage rather than from `total`.
   MiB). Each worker records a baseline right after its imports and mock-data setup
   (`reset_memory_baseline`); `memory_peak_mb` is the peak's growth above that
   baseline (the memory the step needed) and `memory_total_mb` is its absolute
-  value (the process peak). **GPU memory** is taken from the CuPy default pool
-  (`cp.get_default_memory_pool().used_bytes()`).
+  value (the process peak). **GPU memory** is taken from the CuPy default pool:
+  `memory_total_mb` uses `used_bytes()` (live at the end of the run), while the
+  separate `vram_peak_mb` column uses `total_bytes()` — the pool high-water mark,
+  which captures the true peak because the pool only releases blocks to the device
+  on `free_all_blocks()`. Allocations outside the pool (cuFFT plan scratch, numba
+  device arrays) are not counted.
 
 ## Output
 
@@ -127,12 +158,14 @@ Each file starts with a commented provenance header (Python, NumPy, CuPy, CPU
 model, GPU model, …) followed by columns:
 
 ```
-backend, n_particles, nmesh, step, time_mean, time_std, memory_peak_mb, memory_total_mb
+backend, n_particles, nmesh, step, time_mean, time_std, memory_peak_mb, memory_total_mb, vram_peak_mb
 ```
 
 `time_*` are in seconds. `memory_peak_mb` is the peak-RSS increase caused by the
 step and `memory_total_mb` is the absolute process peak RSS, both in MiB (the GPU
-backend instead reports the CuPy pool delta / usage in MB). Read them back with
+backend instead reports the CuPy pool delta / usage in MB). `vram_peak_mb` is the
+GPU device-memory peak — the CuPy pool high-water mark (`total_bytes()`) in MB —
+and is `0.0` for CPU backends and pyrecon. Read them back with
 `pandas.read_csv(path, comment="#")`.
 
 ### Figures (`figures/*.pdf`)

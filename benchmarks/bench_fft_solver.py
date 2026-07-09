@@ -13,7 +13,7 @@ Backends:
 * ``pyrecon`` -- ``IterativeFFTReconstruction`` (``assign_*`` + ``set_density_contrast``
   / ``run(niterations=3)`` / ``read_shifts``).
 
-Particle count is fixed at 1e7 (data and randoms 1:1); the mesh is swept over
+Particle count is fixed at 1e6 (data and randoms 1:1); the mesh is swept over
 256, 512, 1024.
 
 Each ``(backend, nmesh)`` configuration runs in its own subprocess (see
@@ -43,6 +43,7 @@ os.environ["OMP_NUM_THREADS"] = THREADS
 os.environ["MKL_NUM_THREADS"] = THREADS
 os.environ["OPENBLAS_NUM_THREADS"] = THREADS
 os.environ["NUMEXPR_NUM_THREADS"] = THREADS
+os.environ["BAORECON_FFT_THREADS"] = THREADS
 
 #import pyfftw
 #pyfftw.config.NUM_THREADS = int(THREADS)

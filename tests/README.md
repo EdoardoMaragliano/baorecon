@@ -20,6 +20,9 @@ These are the executable regression tests that should be run in CI or during dev
 - `test_los.py` — `FixedAxisLOS` / `LocalLOS` strategies and `project_vector_field_jit`.
 - `test_mesh.py` — `Mesh` geometry, validation, and lightweight (no large arrays) guarantees.
 - `test_naming.py` — `baorecon/io/naming.py` `NamingTokenizer`.
+- `test_radial_kernels.py` — parity of the streamed radial-LOS projection kernels
+  (`_radial_stream` numba vs a numpy reference, and vs the CuPy `ElementwiseKernel`
+  twins in `fft/gpu.py` when a GPU is available).
 - `test_rectangular_box.py` — rectangular/anisotropic box support across boxsize formatting,
   mesh, mass assignment, interpolation, and mass conservation.
 - `test_solver_equivalence.py` — CPU vs GPU FFT solver agreement on a shared input field

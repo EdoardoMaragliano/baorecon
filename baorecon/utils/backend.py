@@ -6,6 +6,8 @@ factory used to pick between the CPU (numpy/scipy) and GPU (CuPy) backends.
 the package.
 """
 
+import os
+
 import numpy as np
 from scipy import fft as sfft
 from dataclasses import dataclass
@@ -25,6 +27,33 @@ try:
 except ImportError:
     CUPY_AVAILABLE = False
     logger.debug("CuPy or Numba not found. GPU backend will be unavailable.")
+
+# --- pyfftw availability (optional in-place, low-memory CPU FFT backend) ---
+# scipy remains the default CPU backend; pyfftw is opt-in via BAORECON_FFT=pyfftw.
+# The in-place path transforms a single padded buffer instead of allocating a
+# fresh output per transform, which roughly halves the CPU FFT working set.
+try:
+    import pyfftw  # noqa: F401
+    PYFFTW_AVAILABLE = True
+except ImportError:
+    PYFFTW_AVAILABLE = False
+    logger.debug("pyfftw not found. The in-place CPU FFT backend will be unavailable.")
+
+
+def use_pyfftw() -> bool:
+    """Return True when the CPU solver should use the in-place pyfftw backend.
+
+    Enabled by setting the environment variable ``BAORECON_FFT=pyfftw`` (any
+    case). Falls back to scipy when pyfftw is not installed, so this is always
+    safe to query. Kept out of the reconstructor/pipeline so the choice needs no
+    change to their call sites.
+    """
+    if os.environ.get("BAORECON_FFT", "scipy").lower() != "pyfftw":
+        return False
+    if not PYFFTW_AVAILABLE:
+        logger.warning("BAORECON_FFT=pyfftw requested but pyfftw is not installed; using scipy.")
+        return False
+    return True
 
 
 @dataclass

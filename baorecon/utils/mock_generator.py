@@ -94,8 +94,8 @@ def generate_lognormal_map(pk_func, side, spacing):
     
     # set the volume
     volume = side**3
-    
-    n_cell = side//spacing
+
+    n_cell = int(side//spacing)
 
     # set the Fourier grid
     kx = np.fft.fftfreq(n_cell, spacing)*np.pi*2

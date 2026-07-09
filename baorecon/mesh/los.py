@@ -132,6 +132,18 @@ class LocalLOS(LOSStrategy):
         self._radial_versor_dev = None
 
     @property
+    def cell_size(self) -> np.ndarray:
+        """Mesh cell size ``boxsize / nmesh`` (float32, shape ``(3,)``).
+
+        Kept in single precision so the on-the-fly radial versor used by the
+        streamed FFT solvers matches the cached :attr:`radial_versor` grid
+        cell for cell (``linspace(0, boxsize, n, endpoint=False)`` has step
+        ``boxsize / nmesh``). ``boxsize / nmesh`` alone would promote the
+        int32 ``nmesh`` division to float64.
+        """
+        return (self.boxsize / self.nmesh.astype(np.float32)).astype(np.float32)
+
+    @property
     def radial_versor(self) -> np.ndarray:
         """Unit radial vector at every mesh point, shape (Nx, Ny, Nz, 3)."""
         if self._radial_versor is None:

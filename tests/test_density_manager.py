@@ -65,30 +65,40 @@ def _random_catalog(npart=100, boxsize=100.0, seed=0):
 
 
 @pytest.mark.parametrize("device", ["cpu", pytest.param("gpu", marks=gpu_test)])
-def test_mass_conservation_all_methods(device):
-    """Mass assignment conserves mass for all methods on both CPU and GPU."""
+@pytest.mark.parametrize("pbc", [True, False])
+def test_mass_conservation_all_methods(device, pbc):
+    """Mass assignment conserves mass for all methods on both CPU and GPU.
+
+    Holds for pbc=True (wrap) and pbc=False (boundary clamp): both fold every
+    weight onto a valid cell, so nothing is dropped.
+    """
     pos, weights, boxsize = _random_catalog(npart=300, boxsize=100.0)
     nmesh = 16
     mesh = _mesh(boxsize, nmesh)
 
     methods_to_test = ("NGP", "CIC", "TSC") if device == "cpu" else ("CIC", "TSC")
     for method in methods_to_test:
-        field = _to_host(assign(pos, weights, mesh, scheme=method, pbc=True, parallel=False, device=device))
+        field = _to_host(assign(pos, weights, mesh, scheme=method, pbc=pbc, parallel=False, device=device))
         assert field.shape == (nmesh, nmesh, nmesh)
         assert np.isfinite(field).all()
         assert np.isclose(field.sum(), weights.sum(), rtol=1e-5, atol=1e-5)
 
 
 @pytest.mark.parametrize("device", ["cpu", pytest.param("gpu", marks=gpu_test)])
-def test_readout_identity(device):
-    """Grid->particle read-out of a constant field returns the constant."""
+@pytest.mark.parametrize("pbc", [True, False])
+def test_readout_identity(device, pbc):
+    """Grid->particle read-out of a constant field returns the constant.
+
+    For pbc=False this also guards the boundary clamp: dropping out-of-range
+    stencil cells would make the interpolation weights near the edge sum to < 1.
+    """
     pos, _, boxsize = _random_catalog(npart=50, boxsize=50.0)
     grid = np.full((8, 8, 8), 2.5, dtype=np.float32)
     mesh = _mesh(boxsize, 8)
 
     methods_to_test = ("NGP", "CIC", "TSC") if device == "cpu" else ("CIC", "TSC")
     for method in methods_to_test:
-        vals = _to_host(readout(grid, pos, mesh, scheme=method, device=device))
+        vals = _to_host(readout(grid, pos, mesh, scheme=method, device=device, pbc=pbc))
         assert vals.shape[0] == pos.shape[0]
         assert np.isfinite(vals).all()
         assert np.allclose(vals, 2.5)
@@ -96,7 +106,7 @@ def test_readout_identity(device):
 
 @pytest.mark.parametrize("device", ["cpu", pytest.param("gpu", marks=gpu_test)])
 def test_pbc_wrapping_equivalence(device):
-    """Assigning a particle outside the box with pbc=True == its wrapped position."""
+    """pbc=True: assigning a particle moved by +boxsize == its wrapped position."""
     pos, weights, boxsize = _random_catalog(npart=200, boxsize=100.0)
     nmesh = 16
     mesh = _mesh(boxsize, nmesh)
@@ -108,6 +118,28 @@ def test_pbc_wrapping_equivalence(device):
         f_orig = _to_host(assign(pos_wrapped, weights, mesh, scheme=method, pbc=True, device=device))
         f_out = _to_host(assign(pos_out, weights, mesh, scheme=method, pbc=True, device=device))
         assert np.allclose(f_orig, f_out)
+
+
+@pytest.mark.parametrize("device", ["cpu", pytest.param("gpu", marks=gpu_test)])
+@pytest.mark.parametrize("method", ["CIC", "TSC"])
+def test_pbc_false_clamps_to_boundary(device, method):
+    """pbc=False: an out-of-range stencil is clamped onto the near boundary cell
+    (mass-conserving), not wrapped to the far side.
+
+    Complements test_pbc_wrapping_equivalence and exercises the clamp path on
+    both backends (this is where the CPU serial/parallel kernels and the GPU
+    kernels used to diverge).
+    """
+    boxsize, nmesh = 100.0, 10
+    mesh = _mesh(boxsize, nmesh)
+    # One particle in the last x-cell (its stencil spills past x=nmesh), interior in y, z.
+    pos = np.array([[99.0, 50.0, 50.0]], dtype=np.float64)
+    weights = np.array([1.0])
+
+    field = _to_host(assign(pos, weights, mesh, scheme=method, pbc=False, device=device))
+    assert np.isclose(field.sum(), 1.0)          # mass conserved (clamped, not dropped)
+    assert abs(field[0].sum()) < 1e-6            # nothing wrapped to the far (x=0) face
+    assert field[nmesh - 1].sum() > 0.0          # mass sits on the near boundary
 
 
 def test_density_manager_vs_pyrecon():

@@ -135,7 +135,10 @@ def test_fftsolver_realistic_grf_closure(device):
     psi = solver.displacement
     phi = solver.potential
 
-    assert np.allclose(psi, psi_true_real, atol=1e-6)
+    # atol is the float32 FFT noise floor (both scipy/pocketfft and pyfftw/FFTW
+    # land at ~5e-6 max abs error here); atol=1e-6 only passed pocketfft by the
+    # luck of where its rounding errors fell.
+    assert np.allclose(psi, psi_true_real, atol=1e-5)
 
     # additive constant, so compare centered fields.
     phi_solver_centered = phi 

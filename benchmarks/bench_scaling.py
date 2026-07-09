@@ -1,6 +1,6 @@
 """Mesh-resolution scaling benchmark (baorecon CPU vs GPU).
 
-Particle count is fixed at 1e7; the mesh is swept over 128, 256, 512, 1024, 2048.
+Particle count is fixed at 1e6; the mesh is swept over 128, 256, 512, 1024, 2048.
 For every mesh size two phases are measured for each backend:
 
 * ``mass_assignment`` -- CIC paint of the data onto the mesh,
@@ -45,7 +45,7 @@ import numpy as np
 
 import bench_common as bc
 
-N_PARTICLES = int(1e7)
+N_PARTICLES = int(1e6)
 NMESHES = [128, 256, 512, 1024, 2048]
 N_ITERATIONS = 3
 F_GROWTH = 0.8

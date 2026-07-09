@@ -17,6 +17,8 @@ This package groups small helper modules shared across the reconstruction pipeli
 - `backend.py`: computational backend selection for the FFT solvers — the `FFTBackend`
   container and `get_fft_backend` factory that pick between the CPU (numpy/scipy) and
   GPU (CuPy) backends; `CUPY_AVAILABLE` is the single source of truth for GPU availability.
+  Also exposes `PYFFTW_AVAILABLE` / `use_pyfftw()`, which gate the opt-in in-place CPU
+  FFT backend on `BAORECON_FFT=pyfftw` (see [../../docs/pyfftw_backend.md](../../docs/pyfftw_backend.md)).
 - `coordinates.py`: cosmology construction (`create_cosmology`) and RA/DEC/redshift ↔
   Cartesian conversions built on Astropy.
 - `loggers.py`: logger configuration shared across modules (`setup_logger`).
