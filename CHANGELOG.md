@@ -106,5 +106,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reused a previous pipeline allocation.
 - `resolve_format` now raises clear errors for an unknown format or extension.
 
-[Unreleased]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.4.0...HEAD
+[Unreleased]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.5.0...HEAD
+[0.5.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.5.0
 [0.4.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.4.0
