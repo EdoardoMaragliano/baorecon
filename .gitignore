@@ -172,3 +172,6 @@ cython_debug/
 
 # output of notebooks tests
 local_tests
+
+
+MULTI_GPU_MIGRATION_PLAN.md
