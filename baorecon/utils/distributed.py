@@ -226,6 +226,20 @@ class NcclComm:
     def allreduce_sum(self, x):
         return self.mpi.allreduce(float(x))
 
+    def allreduce_inplace(self, host_array):
+        """Element-wise global sum of a host numpy array, in place."""
+        from mpi4py import MPI  # noqa: PLC0415
+
+        self.mpi.Allreduce(MPI.IN_PLACE, host_array, op=MPI.SUM)
+        return host_array
+
+    def gather_slabs(self, host_array):
+        """Gather equal-shaped host x-slabs to rank 0 (None on other ranks)."""
+        parts = self.mpi.gather(host_array, root=0)
+        if self.rank != 0:
+            return None
+        return np.concatenate(parts, axis=0)
+
     def barrier(self):
         self.mpi.Barrier()
 
@@ -294,6 +308,22 @@ class LoopbackComm:
         total = sum(self._hub.posted)
         self._done()
         return total
+
+    def allreduce_inplace(self, host_array):
+        self._post_and_sync(host_array.copy())
+        total = sum(self._hub.posted)
+        self._done()
+        host_array[...] = total
+        return host_array
+
+    def gather_slabs(self, host_array):
+        self._post_and_sync(host_array)
+        result = None
+        if self.rank == 0:
+            xp = _xp_of(host_array)
+            result = xp.concatenate(self._hub.posted, axis=0)
+        self._done()
+        return result
 
     def barrier(self):
         self._hub.barrier.wait()
@@ -474,6 +504,29 @@ class DistEnv:
             return x
         return self.comm.allreduce_sum(x)
 
+    def allreduce_inplace(self, host_array):
+        if self.is_distributed:
+            self.comm.allreduce_inplace(host_array)
+        return host_array
+
+    def gather_x_slabs(self, host_array):
+        """Reassemble x-slabs on rank 0 (returns None on other ranks; identity at P=1)."""
+        if not self.is_distributed:
+            return host_array
+        return self.comm.gather_slabs(host_array)
+
     def barrier(self):
         if self.is_distributed:
             self.comm.barrier()
+
+
+def auto_dist_env() -> DistEnv:
+    """Detect the launch context: DistEnv.from_mpi() under ``mpirun -np P>1``,
+    DistEnv.serial() otherwise (including when mpi4py is not installed)."""
+    try:
+        from mpi4py import MPI  # noqa: PLC0415
+    except ImportError:
+        return DistEnv.serial()
+    if MPI.COMM_WORLD.Get_size() == 1:
+        return DistEnv.serial()
+    return DistEnv.from_mpi(MPI.COMM_WORLD)

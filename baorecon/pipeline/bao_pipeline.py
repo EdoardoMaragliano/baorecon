@@ -62,6 +62,18 @@ class ReconstructionPipeline:
         self.catalog = Catalog(self.config)
         self.cosmology = create_cosmology(**self.config.cosmology)
 
+        # Multi-GPU: under `mpirun -np P` with device='gpu' each rank binds one
+        # GPU and owns an x-slab of the mesh; every rank runs the same pipeline
+        # code (catalogues and geometry are replicated, grids are distributed)
+        # and only rank 0 writes outputs. Serial otherwise -- single-process
+        # runs are completely unaffected.
+        from baorecon.utils.distributed import DistEnv, auto_dist_env
+
+        if self.config.reconstruction.get("device", "cpu") == "gpu":
+            self.dist_env = auto_dist_env()
+        else:
+            self.dist_env = DistEnv.serial()
+
         # Single source of truth for the working precision (default float32).
         # Coordinate arrays are cast to this and it is forwarded to the
         # reconstructor: the coordinate helpers now preserve their input dtype,
@@ -188,6 +200,7 @@ class ReconstructionPipeline:
             n_iterations=int(reconstruction_cfg.get("n_iterations", 3)),
             device=reconstruction_cfg.get("device", "cpu"),
             cellsize=cellsize,
+            dist=self.dist_env,
         )
         return self.reconstructor
 
@@ -283,6 +296,11 @@ class ReconstructionPipeline:
         def _save_fits_image(data: np.ndarray, suffix: str) -> str:
             path = str(output_folder / (base_name + suffix))
             host = _to_host(data)  # device -> host copy on the GPU path
+            if self.dist_env.is_distributed:
+                # Collective: every rank contributes its x-slab; rank 0 writes.
+                host = self.dist_env.gather_x_slabs(host)
+                if host is None:
+                    return path
             fits.writeto(path, host, overwrite=True, output_verify="silentfix")
             del host  # release the host copy before the next grid is converted
             logger.info("Saved FITS image to {0}".format(path))
@@ -328,11 +346,16 @@ class ReconstructionPipeline:
             _drop_device_grid("_displacement")
 
         if "reconstructor_object" in save_options:
-            path = str(output_folder / (base_name + "_reconstructor.pkl"))
-            with open(path, "wb") as f:
-                pickle.dump(self.reconstructor, f)
-            saved_paths["reconstructor_object"] = path
-            logger.info("Saved reconstructor object to {0}".format(path))
+            if self.dist_env.is_distributed:
+                # The pickled solver would only contain this rank's slab (and
+                # the live NCCL/MPI handles are not picklable).
+                logger.warning("reconstructor_object save is skipped in distributed mode.")
+            else:
+                path = str(output_folder / (base_name + "_reconstructor.pkl"))
+                with open(path, "wb") as f:
+                    pickle.dump(self.reconstructor, f)
+                saved_paths["reconstructor_object"] = path
+                logger.info("Saved reconstructor object to {0}".format(path))
 
         return saved_paths
 
@@ -374,7 +397,7 @@ class ReconstructionPipeline:
                 logger.info("Calculating %s tracer displacements.", label)
                 displacements = pos_xyz - rec_xyz
 
-            if want_catalogs:
+            if want_catalogs and self.dist_env.rank == 0:
                 path = str(output_folder / (base_name + "_" + label + "." + ext))
                 self.catalog.write_output(
                     path=path,
@@ -403,7 +426,7 @@ class ReconstructionPipeline:
     def _save_metadata(self, output_folder: Path, base_name: str) -> Dict[str, str]:
         """Write the run configuration as a metadata sidecar file."""
         saved_paths: Dict[str, str] = {}
-        if self.config.output.get("save_metadata", True):
+        if self.config.output.get("save_metadata", True) and self.dist_env.rank == 0:
             metadata_path = output_folder / (base_name + "_metadata.txt")
             metadata_path.write_text(str(asdict(self.config)), encoding="utf-8")
             saved_paths["metadata"] = str(metadata_path)
@@ -452,6 +475,8 @@ class ReconstructionPipeline:
         saved_paths.update(self._save_grids(output_folder, base_name, save_options))
         saved_paths.update(self._save_metadata(output_folder, base_name))
 
+        self.dist_env.barrier()
+
         logger.info("Saved outputs: {0}".format(list(saved_paths.keys())))
         return saved_paths
 
@@ -492,6 +517,9 @@ class ReconstructionPipeline:
 
         # 5. Metadata (cheap, no large arrays).
         saved_paths.update(self._save_metadata(output_folder, base_name))
+
+        # All ranks leave together (rank 0 may still be writing files).
+        self.dist_env.barrier()
 
         logger.info("Saved outputs: {0}".format(list(saved_paths.keys())))
         return saved_paths

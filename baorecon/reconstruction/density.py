@@ -55,8 +55,18 @@ class DensityManager:
         threshold_randoms: float = 0.01,
         sm_mode: str = "wrap",
         cellsize: Optional[float] = None,
-        mas_parallel: bool = False
+        mas_parallel: bool = False,
+        dist=None,
     ) -> None:
+        # Distribution context (DistEnv). None/serial keeps the single-device
+        # path untouched. In distributed mode every rank holds the full
+        # catalogues (so the derived box geometry is bit-identical across
+        # ranks) and painting filters by slab ownership.
+        from baorecon.utils.distributed import DistEnv
+
+        self.dist = dist if dist is not None else DistEnv.serial()
+        self._dist_fft = None
+
         self._raw_data_pos = data_pos
         self._raw_random_pos = random_pos
         self._raw_data_weights = data_weights
@@ -144,6 +154,14 @@ class DensityManager:
         """Lower corner of the survey box in the original survey frame."""
         return self.boxcentre - self.boxsize / 2.0
 
+    def _get_dist_fft(self):
+        """Distributed FFT bound to this mesh (created once, GPU only)."""
+        if self._dist_fft is None:
+            from baorecon.solvers.fft._distributed_fft import DistributedFFT
+
+            self._dist_fft = DistributedFFT(self.dist, self.mesh.shape)
+        return self._dist_fft
+
     def compute_delta(self, sm_mode: str = "wrap") -> np.ndarray:
         if self.device == "gpu":
             if not CUPY_AVAILABLE:
@@ -152,19 +170,32 @@ class DensityManager:
         else:
             xp = np
 
+        distributed = self.dist.is_distributed
+        if distributed and self.device != "gpu":
+            raise ValueError("Distributed reconstruction is only implemented for device='gpu'.")
+        dist_fft = self._get_dist_fft() if distributed else None
+
         logger.debug("Assigning data to mesh...")
         data_rho = assign(self.data_pos_box, self.data_weights, self.mesh,
-                          scheme=self.MAS, device=self.device, pbc=self.pbc, parallel=self.mas_parallel)
-        data_rho = smoothed_field(data_rho, self.mesh, self.smoothing_radius)
+                          scheme=self.MAS, device=self.device, pbc=self.pbc,
+                          parallel=self.mas_parallel, dist=self.dist)
+        data_rho = smoothed_field(data_rho, self.mesh, self.smoothing_radius, dist_fft=dist_fft)
 
         logger.debug("Assigning randoms to mesh...")
         random_rho = assign(self.random_pos_box, self.random_weights, self.mesh,
-                            scheme=self.MAS, device=self.device, pbc=self.pbc, parallel=self.mas_parallel)
-        random_rho = smoothed_field(random_rho, self.mesh, self.smoothing_radius)
+                            scheme=self.MAS, device=self.device, pbc=self.pbc,
+                            parallel=self.mas_parallel, dist=self.dist)
+        random_rho = smoothed_field(random_rho, self.mesh, self.smoothing_radius, dist_fft=dist_fft)
 
         logger.debug("Computing overdensity field...")
-        alpha = xp.sum(data_rho) / xp.sum(random_rho)
-        threshold = self.threshold_randoms * random_rho.sum() / len(self.random_pos_box)
+        # In distributed mode the grid sums are slab-local: reduce them
+        # globally before forming alpha and the random threshold (the
+        # catalogue length is already global -- every rank holds the full
+        # catalogue). See the migration audit, E4.
+        sum_data = self.dist.allreduce_sum(float(xp.sum(data_rho)))
+        sum_rand = self.dist.allreduce_sum(float(xp.sum(random_rho)))
+        alpha = sum_data / sum_rand
+        threshold = self.threshold_randoms * sum_rand / len(self.random_pos_box)
         th_mask = random_rho <= threshold
 
         xp.multiply(random_rho, alpha, out=random_rho)

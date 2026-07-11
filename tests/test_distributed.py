@@ -332,3 +332,68 @@ class TestHaloExchange:
         assert owned.shape == (4, 2, 2)
         np.testing.assert_array_equal(owned[0], np.full((2, 2), 12.0))
         np.testing.assert_array_equal(owned[-1], np.full((2, 2), 11.0))
+
+
+# ---------------------------------------------------------------------------
+# Distributed Gaussian smoothing (loopback, numpy) vs the serial smoother
+# ---------------------------------------------------------------------------
+class TestDistributedSmoothing:
+    @pytest.mark.parametrize("world_size", [2, 4])
+    def test_matches_serial_smoothing(self, world_size):
+        from baorecon.field_ops import smoothed_field
+        from baorecon.mesh.mesh import Mesh
+
+        shape = (8, 8, 8)
+        mesh = Mesh(nmesh=8, boxsize=100.0, boxcentre=np.zeros(3))
+        rng = np.random.default_rng(5)
+        field = rng.standard_normal(shape).astype(np.float32)
+        ref = smoothed_field(field.copy(), mesh, smoothing_radius=10.0)
+        envs = _loopback_envs(world_size)
+
+        def fn(env):
+            d = env.decomp(shape)
+            dfft = DistributedFFT(env, shape, xp=np, fft=np.fft)
+            slab = np.ascontiguousarray(field[d.x_offset:d.x_offset + d.nx_local])
+            return smoothed_field(slab, mesh, smoothing_radius=10.0, dist_fft=dfft)
+
+        parts = _run_ranks(envs, fn)
+        got = np.concatenate(parts, axis=0)
+        np.testing.assert_allclose(got, ref, rtol=1e-4, atol=1e-5)
+
+
+# ---------------------------------------------------------------------------
+# Reduction helpers (loopback)
+# ---------------------------------------------------------------------------
+class TestReductions:
+    def test_allreduce_inplace_reassembles_disjoint_rows(self):
+        n, world_size = 10, 2
+        full = np.arange(n * 3, dtype=np.float32).reshape(n, 3)
+
+        def fn(rank, comm):
+            env = DistEnv(rank=rank, world_size=world_size, comm=comm)
+            buf = np.zeros_like(full)
+            mine = slice(rank, n, world_size)   # disjoint rows
+            buf[mine] = full[mine]
+            env.allreduce_inplace(buf)
+            return buf
+
+        for out in run_loopback(world_size, fn):
+            np.testing.assert_array_equal(out, full)
+
+    def test_gather_x_slabs(self):
+        full = np.arange(24, dtype=np.float32).reshape(8, 3)
+
+        def fn(rank, comm):
+            env = DistEnv(rank=rank, world_size=2, comm=comm)
+            return env.gather_x_slabs(full[rank * 4:(rank + 1) * 4])
+
+        r = run_loopback(2, fn)
+        np.testing.assert_array_equal(r[0], full)
+        assert r[1] is None
+
+    def test_serial_env_passthrough(self):
+        env = DistEnv.serial()
+        a = np.ones(3)
+        assert env.allreduce_sum(2.5) == 2.5
+        assert env.gather_x_slabs(a) is a
+        np.testing.assert_array_equal(env.allreduce_inplace(a), np.ones(3))

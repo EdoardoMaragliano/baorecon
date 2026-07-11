@@ -58,10 +58,22 @@ class BAOReconstructor:
         device: str = "cpu",
         cellsize: Optional[float] = None,
         mas_parallel: bool = False,
+        dist=None,
         **kwargs,
     ) -> None:
+        from baorecon.utils.distributed import DistEnv
+
         self._padding = padding
         self._dtype = dtype
+
+        # Distribution context. Serial (the default) leaves every code path
+        # untouched; a distributed DistEnv requires the GPU iFFT solver.
+        self._dist = dist if dist is not None else DistEnv.serial()
+        if self._dist.is_distributed and (device != "gpu" or solver_type != "ifft"):
+            raise ValueError(
+                "Distributed (multi-GPU) reconstruction requires device='gpu' "
+                f"and solver_type='ifft'; got device={device!r}, solver_type={solver_type!r}."
+            )
 
         # nmesh may be a scalar (cubic) or a per-axis (3,) array. When neither
         # nmesh nor cellsize is given, fall back to the historical 256^3 grid.
@@ -100,7 +112,8 @@ class BAOReconstructor:
             device=device,
             threshold_randoms=threshold_randoms,
             cellsize=cellsize,
-            mas_parallel=mas_parallel
+            mas_parallel=mas_parallel,
+            dist=self._dist,
         )
 
         # Read back the resolved geometry (nmesh/boxsize may be derived from cellsize).
@@ -171,6 +184,9 @@ class BAOReconstructor:
             logger.debug(f"Initializing {self._solver_type.upper()} solver ({self._device})...")
             if self._solver_type == "ifft":
                 n_iter = self._solver_args.get("n_iterations", 3)
+                solver_kwargs = {}
+                if self._device == "gpu":
+                    solver_kwargs["dist"] = self._dist
                 self._solver = self._solver_class(
                     delta_on_mesh=self.delta_on_mesh,
                     mesh=self.mesh,
@@ -179,6 +195,7 @@ class BAOReconstructor:
                     bias=self._bias,
                     RSDspace=self._RSDspace,
                     n_iterations=n_iter,
+                    **solver_kwargs,
                 )
             else:  # multigrid 
                 delta_on_mesh = self.delta_on_mesh
@@ -274,6 +291,21 @@ class BAOReconstructor:
                                                  self._boxsize, pbc=self._pbc, dtype=self._dtype)
         else:
             pos_for_interp = positions
+
+        if self._dist.is_distributed:
+            # Each rank interpolates only the particles its x-slab owns (the
+            # displacement halo covers stencils that cross the boundary), then
+            # the full (N, 3) result is recombined order-preservingly with an
+            # in-place Allreduce: rows are disjoint across ranks, so summing
+            # the zero-filled buffers reassembles the catalogue on every rank.
+            decomp = self._dist.decomp(self.mesh.shape)
+            mask = decomp.owned_mask(pos_for_interp[:, 0], self.mesh.boxsize[0], pbc=self._pbc)
+            shifts_own = self.solver.read_displacement_at(
+                pos_for_interp[mask], mas=self.MAS, pbc=self._pbc)
+            shifts = np.zeros((len(pos_for_interp), 3), dtype=np.float32)
+            shifts[mask] = cp.asnumpy(shifts_own)
+            self._dist.allreduce_inplace(shifts)
+            return shifts
 
         if self._solver_type == 'ifft':
             # The GPU solver keeps the displacement field on the device, so the

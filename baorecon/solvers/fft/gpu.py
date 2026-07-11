@@ -109,30 +109,61 @@ else:
 
 
 class FFTSolverGPU(PoissonSolver):
-    """FFT-based Poisson/Zel'dovich solver on the GPU (CuPy)."""
+    """FFT-based Poisson/Zel'dovich solver on the GPU (CuPy).
+
+    With a distributed environment (``dist`` with ``world_size > 1``),
+    ``delta_on_mesh`` is this rank's x-slab, every transform routes through the
+    slab :class:`~baorecon.solvers.fft._distributed_fft.DistributedFFT`, the
+    1-D ky array is sliced to the rank's ky block, and the displacement is kept
+    in a halo-extended slab for cross-rank read-back. The Burden loop itself is
+    identical to the single-GPU path.
+    """
+
+    # Read-back ghost width for the distributed displacement grid: sized for
+    # the widest supported read stencil (TSC), so any MAS can read from it.
+    _DISP_HALO = 2
 
     def __init__(self, delta_on_mesh, mesh, los=None, f=None, bias=1.0,
-                 RSDspace="RealSpace", n_iterations=3) -> None:
+                 RSDspace="RealSpace", n_iterations=3, dist=None) -> None:
         super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace)
+        from baorecon.utils.distributed import DistEnv
+
         self.los = los
         self.n_iterations = n_iterations
+        self.dist = dist if dist is not None else DistEnv.serial()
         self.backend = get_fft_backend("gpu")
         self.xp = self.backend.xp
-        self.fft = self.backend.fft
+        self._init_fft()
         self._complex_j = self.xp.complex64(1j)
         self._k_host = None
+        self._displacement_ext = None
+        self._disp_halo_filled = False
+
+    def _init_fft(self):
+        if self.dist.is_distributed:
+            from baorecon.solvers.fft._distributed_fft import DistributedFFT
+
+            self.fft = DistributedFFT(self.dist, self.mesh.shape)
+        else:
+            self.fft = self.backend.fft
 
     def __getstate__(self):
         state = self.__dict__.copy()
-        for key in ("backend", "xp", "fft", "_complex_j", "_k_host"):
+        # "dist" holds live NCCL/MPI handles and cannot be pickled; a restored
+        # solver comes back serial (its grids are this rank's slabs).
+        for key in ("backend", "xp", "fft", "_complex_j", "_k_host", "dist"):
             state.pop(key, None)
         return state
 
     def __setstate__(self, state):
         self.__dict__.update(state)
+        if getattr(self, "dist", None) is None:
+            from baorecon.utils.distributed import DistEnv
+
+            self.dist = DistEnv.serial()
         self.backend = get_fft_backend("gpu")
         self.xp = self.backend.xp
-        self.fft = self.backend.fft
+        self._init_fft()
         self._complex_j = self.xp.complex64(1j)
         self._k_host = None
 
@@ -140,10 +171,14 @@ class FFTSolverGPU(PoissonSolver):
         """Cached host 1-D wavevector arrays ``(kx, ky, kz)``.
 
         Cached on the host and uploaded per method; recomputing the 1-D arrays
-        on every displacement/potential pass is pure waste.
+        on every displacement/potential pass is pure waste. In distributed mode
+        ``ky`` is this rank's ky block (kx/kz stay global on every rank).
         """
         if self._k_host is None:
-            self._k_host = prepare_k_components(self.mesh.cell_size, self.mesh.nmesh)
+            kx, ky, kz = prepare_k_components(self.mesh.cell_size, self.mesh.nmesh)
+            if self.dist.is_distributed:
+                ky = self.fft.decomp.ky_slice(ky)
+            self._k_host = (kx, ky, kz)
         return self._k_host
 
     def _compute_displacement_mesh(self) -> None:
@@ -201,6 +236,11 @@ class FFTSolverGPU(PoissonSolver):
             mc, cs = self.los.min_corner, self.los.cell_size
             min_x, min_y, min_z = float(mc[0]), float(mc[1]), float(mc[2])
             cell_x, cell_y, cell_z = float(cs[0]), float(cs[1]), float(cs[2])
+            if self.dist.is_distributed:
+                # The versor kernels recover the cell x-index from the local
+                # flat index; shifting min_x by the slab origin makes the
+                # coordinate global with no kernel change (audit E6).
+                min_x += self.fft.decomp.x_offset * cell_x
             ny, nz = int(delta_dev.shape[1]), int(delta_dev.shape[2])
             s = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)            # s = grad . n_hat
             proj_scratch = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)  # s * n_hat
@@ -266,7 +306,17 @@ class FFTSolverGPU(PoissonSolver):
 
         # Converged density -> displacement psi = grad(phi), phi = delta/(bias k^2),
         # built and kept on the device (the potential is recomputed from psi on demand).
-        displacement_dev = xp.empty(delta_dev.shape + (3,), dtype=delta_dev.dtype)
+        # In distributed mode the grid is allocated with read-back ghost planes
+        # up front and the components are written into the interior view, so no
+        # post-hoc extended copy is ever needed for cross-rank interpolation.
+        if self.dist.is_distributed:
+            w = self._DISP_HALO
+            ext_shape = (delta_dev.shape[0] + 2 * w,) + delta_dev.shape[1:] + (3,)
+            self._displacement_ext = xp.empty(ext_shape, dtype=delta_dev.dtype)
+            self._disp_halo_filled = False
+            displacement_dev = self._displacement_ext[w:-w]
+        else:
+            displacement_dev = xp.empty(delta_dev.shape + (3,), dtype=delta_dev.dtype)
         for i in range(3):
             _scale_component_k(delta_k, kx, ky, kz, inv_bias, 1.0,
                                i, 1, nyk, nzk, temp_k_comp)
@@ -310,7 +360,27 @@ class FFTSolverGPU(PoissonSolver):
         ``position`` is an ``(N, 3)`` array in the box frame (``[0, boxsize)``).
         Returns an ``(N, 3)`` CuPy array; the caller decides if/when to bring it
         to host. The displacement grid itself never leaves the device.
+
+        In distributed mode ``position`` must contain only particles owned by
+        this rank (see ``SlabDecomp.owned_mask``); the ghost planes of the
+        extended displacement slab are filled from the neighbours once (copy
+        halos) and the offset-aware read kernels do the rest.
         """
+        if self.dist.is_distributed:
+            from baorecon.mas import read_field_at
+            from baorecon.utils.distributed import halo_exchange_copy
+
+            _ = self.displacement  # ensure the field (and its halo slab) exists
+            if not self._disp_halo_filled:
+                halo_exchange_copy(self._displacement_ext, self.dist,
+                                   self._DISP_HALO, pbc=pbc)
+                # the exchange runs on CuPy's stream; the numba read kernels run
+                # on numba's -- order them explicitly (audit E7).
+                self.xp.cuda.get_current_stream().synchronize()
+                self._disp_halo_filled = True
+            return read_field_at(self._displacement_ext, position, self.mesh,
+                                 self.dist, scheme=mas, pbc=pbc)
+
         from baorecon.field_ops import interpolate_vector_field
 
         return interpolate_vector_field(

@@ -101,7 +101,16 @@ def interpolate_vector_field(pos, field, boxsize, MAS="CIC", pbc=True, dtype=np.
     return interp_field
 
 
-def smoothed_field(field_on_mesh, mesh, smoothing_radius):
+def smoothed_field(field_on_mesh, mesh, smoothing_radius, dist_fft=None):
+    """Gaussian-smooth a field on the mesh (separable k-space kernel).
+
+    ``mesh`` always describes the *global* geometry. In distributed mode pass
+    ``dist_fft`` (a :class:`~baorecon.solvers.fft._distributed_fft.DistributedFFT`):
+    ``field_on_mesh`` is then this rank's x-slab, the transforms are the
+    distributed ones, and the ky Gaussian factor is sliced to the local ky
+    block (the smoothing is a whole-mesh operation -- smoothing each slab
+    independently would be wrong; see the migration audit, E3).
+    """
     xp = _get_array_module(field_on_mesh)
     nx, ny, nz = mesh.shape
     orig_dtype = field_on_mesh.dtype
@@ -112,6 +121,14 @@ def smoothed_field(field_on_mesh, mesh, smoothing_radius):
     sx = xp.exp(-h * (xp.asarray(np.fft.fftfreq(nx,  d=cs[0]) * 2*np.pi, dtype=orig_dtype) ** 2))
     sy = xp.exp(-h * (xp.asarray(np.fft.fftfreq(ny,  d=cs[1]) * 2*np.pi, dtype=orig_dtype) ** 2))
     sz = xp.exp(-h * (xp.asarray(np.fft.rfftfreq(nz, d=cs[2]) * 2*np.pi, dtype=orig_dtype) ** 2))
+
+    if dist_fft is not None and dist_fft.env.is_distributed:
+        d = dist_fft.decomp
+        delta_k = dist_fft.rfftn(field_on_mesh)      # (Nx, Ny_loc, Nzh), ky-split
+        delta_k *= sx[:, None, None]
+        delta_k *= sy[d.ky_offset:d.ky_offset + d.ny_local][None, :, None]
+        delta_k *= sz[None, None, :]
+        return dist_fft.irfftn(delta_k, s=field_on_mesh.shape)
 
     if xp is np:
         import scipy.fft as sfft
