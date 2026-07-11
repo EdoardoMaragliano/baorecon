@@ -331,6 +331,86 @@ def run_loopback(world_size, fn):
 
 
 # ---------------------------------------------------------------------------
+# Ghost-zone (halo) exchanges along the x-split
+# ---------------------------------------------------------------------------
+def _xp_of(a):
+    if CUPY_AVAILABLE and isinstance(a, cp.ndarray):
+        return cp
+    return np
+
+
+def halo_exchange_add(mesh_ext, env, w, pbc=True):
+    """Fold the ±w halo planes of an extended slab into their owners (add).
+
+    ``mesh_ext`` has shape ``(nx_local + 2w, Ny, Nz[, ...])``: planes ``[:w]``
+    hold contributions to the left neighbour's last ``w`` owned planes, planes
+    ``[-w:]`` to the right neighbour's first ``w``. Mass-conserving: every halo
+    plane is *added* into the owning rank's edge. With ``pbc`` the ring wraps;
+    otherwise the outer edges are skipped (the paint kernels clamp at the
+    global boundary, so edge halos are empty). Returns the owned
+    ``(nx_local, ...)`` block (a contiguous view of ``mesh_ext``).
+    """
+    if w == 0:
+        return mesh_ext
+    xp = _xp_of(mesh_ext)
+    owned = mesh_ext[w:-w]
+    if not env.is_distributed:
+        if pbc:
+            owned[:w] += mesh_ext[-w:]
+            owned[-w:] += mesh_ext[:w]
+        return owned
+
+    to_left = xp.ascontiguousarray(mesh_ext[:w])
+    to_right = xp.ascontiguousarray(mesh_ext[-w:])
+    from_left = xp.empty_like(to_left)
+    from_right = xp.empty_like(to_right)
+    env.comm.exchange_halos(to_left, to_right, from_left, from_right)
+    if pbc or env.rank != 0:
+        owned[:w] += from_left
+    if pbc or env.rank != env.world_size - 1:
+        owned[-w:] += from_right
+    return owned
+
+
+def halo_exchange_copy(field_ext, env, w, pbc=True):
+    """Fill the ±w halo planes of an extended slab from the neighbours (copy).
+
+    The low halo receives the left neighbour's last ``w`` owned planes and the
+    high halo the right neighbour's first ``w`` (periodic ring). Used before
+    grid->particle read-back so interpolation stencils can cross the slab
+    boundary. With ``pbc=False`` the outer edge halos are zeroed instead (the
+    read kernels clamp there and never dereference them).
+    """
+    if w == 0:
+        return field_ext
+    xp = _xp_of(field_ext)
+    owned = field_ext[w:-w]
+    if not env.is_distributed:
+        if pbc:
+            field_ext[:w] = owned[-w:]
+            field_ext[-w:] = owned[:w]
+        else:
+            field_ext[:w] = 0
+            field_ext[-w:] = 0
+        return field_ext
+
+    to_left = xp.ascontiguousarray(owned[:w])     # becomes the left neighbour's high halo
+    to_right = xp.ascontiguousarray(owned[-w:])   # becomes the right neighbour's low halo
+    from_left = xp.empty_like(to_left)
+    from_right = xp.empty_like(to_right)
+    env.comm.exchange_halos(to_left, to_right, from_left, from_right)
+    if pbc or env.rank != 0:
+        field_ext[:w] = from_left
+    else:
+        field_ext[:w] = 0
+    if pbc or env.rank != env.world_size - 1:
+        field_ext[-w:] = from_right
+    else:
+        field_ext[-w:] = 0
+    return field_ext
+
+
+# ---------------------------------------------------------------------------
 # Distribution environment
 # ---------------------------------------------------------------------------
 @dataclass

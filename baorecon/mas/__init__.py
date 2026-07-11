@@ -5,12 +5,19 @@ to particle positions. Both take a :class:`~baorecon.mesh.mesh.Mesh` and
 dispatch to the CPU/GPU kernels.
 """
 
-from baorecon.mas._interface import CUPY_AVAILABLE, assign, readout
+from baorecon.mas._interface import (
+    CUPY_AVAILABLE,
+    HALO_WIDTH,
+    assign,
+    read_field_at,
+    readout,
+)
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
 
-__all__ = ["assign", "readout", "CUPY_AVAILABLE", "_mass_assignment_info"]
+__all__ = ["assign", "readout", "read_field_at", "HALO_WIDTH", "CUPY_AVAILABLE",
+           "_mass_assignment_info"]
 
 
 def _mass_assignment_info():

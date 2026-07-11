@@ -10,6 +10,7 @@ mpirun-gated suite in ``tests/test_distributed_gpu.py``.
 import numpy as np
 import pytest
 
+from baorecon.mas._interface import HALO_WIDTH
 from baorecon.solvers.fft._distributed_fft import (
     DistributedFFT,
     pack_forward,
@@ -17,7 +18,14 @@ from baorecon.solvers.fft._distributed_fft import (
     unpack_forward,
     unpack_inverse,
 )
-from baorecon.utils.distributed import DistEnv, LoopbackComm, SlabDecomp, run_loopback
+from baorecon.utils.distributed import (
+    DistEnv,
+    LoopbackComm,
+    SlabDecomp,
+    halo_exchange_add,
+    halo_exchange_copy,
+    run_loopback,
+)
 
 
 def _loopback_envs(world_size):
@@ -204,3 +212,123 @@ class TestDistributedFFT:
         send = pack_inverse(b, p)
         back = unpack_forward(send, p, nx_loc, ny_loc, nzh)
         np.testing.assert_array_equal(back, b)
+
+
+# ---------------------------------------------------------------------------
+# Halo exchanges (loopback, numpy)
+# ---------------------------------------------------------------------------
+def _slab_index(ixg, x_start, nx_global, nx_ext, pbc):
+    """Python replica of the CUDA slab-index mapping in baorecon/mas/gpu.py."""
+    d = ixg - x_start
+    if pbc:
+        if d < 0:
+            d += nx_global
+        elif d >= nx_global:
+            d -= nx_global
+    if d < 0 or d >= nx_ext:
+        return -1
+    return d
+
+
+def _paint_cic(grid, x_index_map, pos, weights, boxsize, nshape, pbc):
+    """Reference CIC painter using the kernels' exact index formulas.
+
+    ``x_index_map(ixg)`` maps a (wrapped/clamped) global x cell to a grid row,
+    or -1 to skip -- identity for the global reference, the slab mapping for
+    the distributed emulation.
+    """
+    nx, ny, nz = nshape
+    for p, wgt in zip(pos, weights):
+        gx, gy, gz = p[0] * nx / boxsize[0], p[1] * ny / boxsize[1], p[2] * nz / boxsize[2]
+        ix0, iy0, iz0 = int(np.floor(gx)), int(np.floor(gy)), int(np.floor(gz))
+        dx, dy, dz = gx - ix0, gy - iy0, gz - iz0
+        for l in range(2):
+            ixg = (ix0 + l) % nx if pbc else min(max(ix0 + l, 0), nx - 1)
+            row = x_index_map(ixg)
+            if row < 0:
+                continue
+            wx = 1.0 - dx if l == 0 else dx
+            for m in range(2):
+                iy = (iy0 + m) % ny if pbc else min(max(iy0 + m, 0), ny - 1)
+                wy = 1.0 - dy if m == 0 else dy
+                for n in range(2):
+                    iz = (iz0 + n) % nz if pbc else min(max(iz0 + n, 0), nz - 1)
+                    wz = 1.0 - dz if n == 0 else dz
+                    grid[row, iy, iz] += wgt * wx * wy * wz
+
+
+class TestHaloExchange:
+    @pytest.mark.parametrize("pbc", [True, False])
+    @pytest.mark.parametrize("world_size", [2, 4])
+    def test_distributed_cic_paint_matches_global(self, world_size, pbc):
+        """Emulated slab painting + halo fold == global reference paint."""
+        shape = (8, 4, 4)
+        boxsize = np.array([100.0, 50.0, 50.0])
+        rng = np.random.default_rng(4)
+        npart = 200
+        pos = rng.uniform(0, 1, size=(npart, 3)) * boxsize
+        weights = rng.uniform(0.5, 1.5, size=npart)
+        w = HALO_WIDTH["CIC"]
+
+        ref = np.zeros(shape)
+        _paint_cic(ref, lambda ixg: ixg, pos, weights, boxsize, shape, pbc)
+
+        envs = _loopback_envs(world_size)
+
+        def fn(env):
+            d = env.decomp(shape)
+            mask = d.owned_mask(pos[:, 0], boxsize[0], pbc=pbc)
+            ext = np.zeros((d.nx_local + 2 * w,) + shape[1:])
+            x_start = d.x_offset - w
+            _paint_cic(ext,
+                       lambda ixg: _slab_index(ixg, x_start, shape[0], ext.shape[0], pbc),
+                       pos[mask], weights[mask], boxsize, shape, pbc)
+            return halo_exchange_add(ext, env, w, pbc=pbc).copy()
+
+        parts = _run_ranks(envs, fn)
+        got = np.concatenate(parts, axis=0)
+        np.testing.assert_allclose(got, ref, rtol=1e-12, atol=1e-12)
+        # mass conservation
+        expected_mass = weights.sum() if pbc else ref.sum()
+        np.testing.assert_allclose(got.sum(), expected_mass if pbc else ref.sum(), rtol=1e-12)
+
+    @pytest.mark.parametrize("pbc", [True, False])
+    def test_halo_exchange_copy_fills_neighbour_planes(self, pbc):
+        shape = (12, 3, 3)
+        world_size, w = 3, 2
+        full = np.arange(np.prod(shape), dtype=np.float64).reshape(shape)
+        envs = _loopback_envs(world_size)
+
+        def fn(env):
+            d = env.decomp(shape)
+            owned = full[d.x_offset:d.x_offset + d.nx_local]
+            ext = np.full((d.nx_local + 2 * w,) + shape[1:], -1.0)
+            ext[w:-w] = owned
+            halo_exchange_copy(ext, env, w, pbc=pbc)
+            return ext
+
+        parts = _run_ranks(envs, fn)
+        for r, ext in enumerate(parts):
+            d = envs[r].decomp(shape)
+            lo = [(d.x_offset - w + i) % shape[0] for i in range(w)]
+            hi = [(d.x_offset + d.nx_local + i) % shape[0] for i in range(w)]
+            expect_lo = full[lo]
+            expect_hi = full[hi]
+            if not pbc and r == 0:
+                expect_lo = np.zeros_like(expect_lo)
+            if not pbc and r == world_size - 1:
+                expect_hi = np.zeros_like(expect_hi)
+            np.testing.assert_array_equal(ext[:w], expect_lo)
+            np.testing.assert_array_equal(ext[-w:], expect_hi)
+            np.testing.assert_array_equal(ext[w:-w], full[d.x_offset:d.x_offset + d.nx_local])
+
+    def test_halo_add_serial_pbc_fold(self):
+        env = DistEnv.serial()
+        ext = np.zeros((6, 2, 2))
+        ext[0] = 1.0   # low halo -> high owned edge
+        ext[-1] = 2.0  # high halo -> low owned edge
+        ext[1:-1] = 10.0
+        owned = halo_exchange_add(ext, env, 1, pbc=True)
+        assert owned.shape == (4, 2, 2)
+        np.testing.assert_array_equal(owned[0], np.full((2, 2), 12.0))
+        np.testing.assert_array_equal(owned[-1], np.full((2, 2), 11.0))
