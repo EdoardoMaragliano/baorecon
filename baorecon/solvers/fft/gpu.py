@@ -10,7 +10,6 @@ a stored psi_k grid.
 
 from baorecon.solvers._interface import PoissonSolver
 from baorecon.solvers.fft._common import (
-    build_inv_k2,
     divergence_from_components,
     prepare_k_components,
 )
@@ -74,9 +73,39 @@ if _cupy is not None:
         parallel = s * versor;
         ''',
         'reconstruct_parallel_vector')
+    # out = (sign * i) * k_axis [* 1/(bias k^2)] * v, with |k|^2 evaluated on the
+    # fly from the three 1-D wavevector arrays. This replaces the materialized
+    # ``inv_k2_bias`` real half-grid (~0.5 grid) and the ``scaled_k`` complex
+    # scratch (~1 grid) of the previous implementation: nothing k-dependent is
+    # stored beyond the 1-D arrays. The DC handling is positional (k^2 == 0
+    # emits 0, exactly what ``build_inv_k2`` encoded by index), which also makes
+    # the kernel correct on a ky-slab of a distributed k-grid with no rank-aware
+    # special case. ``i`` indexes a C-contiguous (nxk, nyk, nzk) complex grid.
+    _scale_component_k = _cupy.ElementwiseKernel(
+        'C v, raw float32 kx, raw float32 ky, raw float32 kz, '
+        'float32 inv_bias, float32 sign, int32 axis, int32 use_inv_k2, '
+        'int32 nyk, int32 nzk',
+        'C out',
+        '''
+        const long iz = i % nzk;
+        const long iy = (i / nzk) % nyk;
+        const long ix = i / ((long)nyk * nzk);
+        const float ka = (axis == 0) ? kx[ix] : ((axis == 1) ? ky[iy] : kz[iz]);
+        float fac = sign * ka;
+        if (use_inv_k2) {
+            const float kxv = kx[ix];
+            const float kyv = ky[iy];
+            const float kzv = kz[iz];
+            const float k2 = kxv * kxv + kyv * kyv + kzv * kzv;
+            fac = (k2 > 0.0f) ? fac * inv_bias / k2 : 0.0f;
+        }
+        out = C(-fac * v.imag(), fac * v.real());
+        ''',
+        'scale_component_k')
 else:
     _project_grad_onto_los = None
     _reconstruct_parallel_vector = None
+    _scale_component_k = None
 
 
 class FFTSolverGPU(PoissonSolver):
@@ -137,12 +166,15 @@ class FFTSolverGPU(PoissonSolver):
         # on the device. Keep it read-only if you touch the loop below.
         delta_dev = self.backend.to_device(self.delta_on_mesh)
 
+        # 1-D wavevectors only: |k|^2 and 1/(bias k^2) are evaluated on the fly
+        # inside _scale_component_k, so no k-dependent grid is ever materialized.
         kx_h, ky_h, kz_h = self._k_components()
-        kx, ky, kz = xp.asarray(kx_h), xp.asarray(ky_h), xp.asarray(kz_h)
+        kx = xp.asarray(kx_h, dtype=xp.float32)
+        ky = xp.asarray(ky_h, dtype=xp.float32)
+        kz = xp.asarray(kz_h, dtype=xp.float32)
         k_comps = (kx, ky, kz)
-        k_bcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
-
-        inv_k2_bias = build_inv_k2(k_comps, bias=self.bias)
+        inv_bias = float(1.0 / self.bias)
+        nyk, nzk = int(ky.size), int(kz.size)
 
         # The line of sight sets the geometry of the projection:
         #  * FixedAxisLOS (plane-parallel): n_hat is a fixed Cartesian axis, so the
@@ -163,9 +195,7 @@ class FFTSolverGPU(PoissonSolver):
         delta_k = self.fft.rfftn(delta_dev)
         temp_k_comp = xp.empty_like(delta_k)   # reused complex scratch
 
-        if axis is not None:
-            ka = k_bcast[axis]                      # k along the LOS axis
-        elif radial and n_iterations > 0:
+        if radial and n_iterations > 0:
             # Radial LOS geometry as scalars for the on-the-fly versor, plus the
             # parallel magnitude s and a reused scatter scratch (no versor grid).
             mc, cs = self.los.min_corner, self.los.cell_size
@@ -174,8 +204,7 @@ class FFTSolverGPU(PoissonSolver):
             ny, nz = int(delta_dev.shape[1]), int(delta_dev.shape[2])
             s = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)            # s = grad . n_hat
             proj_scratch = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)  # s * n_hat
-            scaled_k = xp.empty_like(delta_k)   # reused complex scratch: delta_k * inv_k2_bias
-        elif n_iterations > 0:
+        elif axis is None and n_iterations > 0:
             raise TypeError(
                 f"FFTSolverGPU does not support line-of-sight strategy "
                 f"{type(self.los).__name__!r}: expected FixedAxisLOS (exposes "
@@ -186,30 +215,32 @@ class FFTSolverGPU(PoissonSolver):
             logger.info(f"Iteration {iteration + 1}")
 
             if axis is not None:
-                # Gradient of the potential along the LOS axis: grad_a = d_a phi.
-                xp.multiply(delta_k, inv_k2_bias, out=temp_k_comp)
+                # Gradient of the potential along the LOS axis, in one fused pass:
+                # grad_a_k = -i k_a delta_k / (bias k^2).
+                _scale_component_k(delta_k, kx, ky, kz, inv_bias, -1.0,
+                                   axis, 1, nyk, nzk, temp_k_comp)
                 del delta_k
-                temp_k_comp *= ka
-                temp_k_comp *= -self._complex_j
                 grad_a = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
                 # Divergence of the parallel field (single axis): d_a grad_a.
                 corr_k = self.fft.rfftn(grad_a)
-                corr_k *= ka
-                corr_k *= self._complex_j
-                correction = self.fft.irfftn(corr_k, s=delta_dev.shape)
-                
+                _scale_component_k(corr_k, kx, ky, kz, 1.0, 1.0,
+                                   axis, 0, nyk, nzk, temp_k_comp)
+                del corr_k
+                correction = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
+
             elif radial:
                 # Project the gradient onto the radial LOS: accumulate the parallel
                 # magnitude s = grad.n_hat one gradient component at a time, with the
-                # versor evaluated on the fly by the device kernel (no versor grid).
-                xp.multiply(delta_k, inv_k2_bias, out=scaled_k)
-                del delta_k
-                scaled_k *= -self._complex_j
+                # versor evaluated on the fly by the device kernel (no versor grid)
+                # and the k-space scaling -i k_i delta_k / (bias k^2) fused into a
+                # single pass per component (no scaled_k / inv_k2 grids).
                 for i in range(3):
-                    xp.multiply(scaled_k, k_bcast[i], out=temp_k_comp)
+                    _scale_component_k(delta_k, kx, ky, kz, inv_bias, -1.0,
+                                       i, 1, nyk, nzk, temp_k_comp)
                     grad_i = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
                     _project_grad_onto_los(grad_i, i, min_x, min_y, min_z,
                                            cell_x, cell_y, cell_z, ny, nz, int(i == 0), s)
+                del delta_k
                 self.xp.get_default_memory_pool().free_all_blocks()
 
                 # Divergence of the parallel field s*n_hat, each component scattered
@@ -231,15 +262,14 @@ class FFTSolverGPU(PoissonSolver):
             delta_k = self.fft.rfftn(correction)
 
         if n_iterations > 0 and radial:
-            del s, proj_scratch, scaled_k
+            del s, proj_scratch
 
         # Converged density -> displacement psi = grad(phi), phi = delta/(bias k^2),
         # built and kept on the device (the potential is recomputed from psi on demand).
         displacement_dev = xp.empty(delta_dev.shape + (3,), dtype=delta_dev.dtype)
         for i in range(3):
-            xp.multiply(k_bcast[i], delta_k, out=temp_k_comp)
-            temp_k_comp *= inv_k2_bias
-            temp_k_comp *= self._complex_j
+            _scale_component_k(delta_k, kx, ky, kz, inv_bias, 1.0,
+                               i, 1, nyk, nzk, temp_k_comp)
             displacement_dev[..., i] = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
 
         del temp_k_comp
@@ -253,19 +283,19 @@ class FFTSolverGPU(PoissonSolver):
         xp = self.xp
 
         kx_h, ky_h, kz_h = self._k_components()
-        kx, ky, kz = xp.asarray(kx_h), xp.asarray(ky_h), xp.asarray(kz_h)
-        k_bcast = (kx[:, None, None], ky[None, :, None], kz[None, None, :])
+        kx = xp.asarray(kx_h, dtype=xp.float32)
+        ky = xp.asarray(ky_h, dtype=xp.float32)
+        kz = xp.asarray(kz_h, dtype=xp.float32)
+        nyk, nzk = int(ky.size), int(kz.size)
 
-        inv_k2 = build_inv_k2((kx, ky, kz))
-
-        # Potential from the displacement: phi_k = i k.psi_k / k^2.
+        # Potential from the displacement: phi_k = i k.psi_k / k^2, with the
+        # i k_a / k^2 scaling fused on the fly (no inv_k2 half-grid).
         disp = self._displacement
         phi_k = None
         for i in range(3):
             psi_k_comp = self.fft.rfftn(xp.ascontiguousarray(disp[..., i]))
-            psi_k_comp *= k_bcast[i]
-            psi_k_comp *= inv_k2
-            psi_k_comp *= self._complex_j
+            _scale_component_k(psi_k_comp, kx, ky, kz, 1.0, 1.0,
+                               i, 1, nyk, nzk, psi_k_comp)
             if phi_k is None:
                 phi_k = psi_k_comp
             else:
@@ -274,6 +304,20 @@ class FFTSolverGPU(PoissonSolver):
         potential_dev = self.fft.irfftn(phi_k, s=self.delta_on_mesh.shape, axes=(0, 1, 2))
         self._potential = self.backend.to_host(potential_dev)
 
-    def read_displacement_at(self, position, mas = 'CIC'):
-        # TODO
-        pass
+    def read_displacement_at(self, position, mas='CIC', pbc=True):
+        """Interpolate the device-resident displacement at particle positions.
+
+        ``position`` is an ``(N, 3)`` array in the box frame (``[0, boxsize)``).
+        Returns an ``(N, 3)`` CuPy array; the caller decides if/when to bring it
+        to host. The displacement grid itself never leaves the device.
+        """
+        from baorecon.field_ops import interpolate_vector_field
+
+        return interpolate_vector_field(
+            pos=self.xp.asarray(position, dtype=self.xp.float32),
+            field=self.displacement,
+            boxsize=self.mesh.boxsize,
+            MAS=mas,
+            pbc=pbc,
+            dtype=self.mesh.dtype,
+        )
