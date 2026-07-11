@@ -131,3 +131,57 @@ def test_smoothed_field_reduces_variance():
     noisy_field = np.random.normal(0, 1.0, size=(N, N, N))
     smoothed = smoothed_field(noisy_field, mesh, smoothing_radius=2.0)
     assert np.var(smoothed) < np.var(noisy_field)
+
+
+# ==========================================
+# GPU PARITY (skipped without CUDA)
+# ==========================================
+from baorecon.utils.backend import CUPY_AVAILABLE  # noqa: E402
+
+gpu_test = pytest.mark.skipif(not CUPY_AVAILABLE, reason="GPU not available or CuPy not installed")
+
+
+@gpu_test
+@pytest.mark.parametrize("mas_scheme", ["CIC", "TSC"])
+def test_interpolate_vector_field_gpu_matches_cpu(mas_scheme):
+    import cupy as cp
+
+    nmesh, boxsize = 8, 10.0
+    rng = np.random.default_rng(42)
+    field = rng.normal(0, 1, size=(nmesh, nmesh, nmesh, 3)).astype(np.float32)
+    pos = rng.uniform(0, boxsize, size=(200, 3)).astype(np.float32)
+
+    ref = interpolate_vector_field(pos, field, boxsize, MAS=mas_scheme, pbc=True,
+                                   dtype=np.float32)
+    got = interpolate_vector_field(cp.asarray(pos), cp.asarray(field), boxsize,
+                                   MAS=mas_scheme, pbc=True, dtype=np.float32)
+    np.testing.assert_allclose(cp.asnumpy(got), ref, rtol=1e-4, atol=1e-5)
+
+
+@gpu_test
+def test_divergence_fft_gpu_matches_cpu():
+    import cupy as cp
+
+    N = 32
+    mesh = DummyMesh(N=N, boxsize=2 * np.pi)
+    x = np.linspace(0, 2 * np.pi, N, endpoint=False)
+    X = np.meshgrid(x, x, x, indexing="ij")[0]
+    field = np.zeros((N, N, N, 3), dtype=np.float32)
+    field[..., 0] = np.sin(X)
+
+    k_dev = tuple(cp.asarray(k, dtype=cp.float32) for k in mesh.k_components)
+    div = divergence(cp.asarray(field), div_algo="FFT", k_components=k_dev)
+    np.testing.assert_allclose(cp.asnumpy(div), np.cos(X), atol=1e-4)
+
+
+@gpu_test
+def test_smoothed_field_gpu_matches_cpu():
+    import cupy as cp
+
+    N = 32
+    mesh = DummyMesh(N=N, boxsize=10.0)
+    rng = np.random.default_rng(42)
+    field = rng.normal(0, 1.0, size=(N, N, N)).astype(np.float32)
+    ref = smoothed_field(field.copy(), mesh, smoothing_radius=2.0)
+    got = smoothed_field(cp.asarray(field), mesh, smoothing_radius=2.0)
+    np.testing.assert_allclose(cp.asnumpy(got), ref, rtol=1e-4, atol=1e-5)

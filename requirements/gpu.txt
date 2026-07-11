@@ -4,3 +4,8 @@
 # The default below targets CUDA 12.x. For CUDA 11.x, replace this line
 # with cupy-cuda11x.
 cupy-cuda12x
+# Multi-GPU (optional): process launch/orchestration for the slab-decomposed
+# solver (`mpirun -np P ...`). GPU<->GPU collectives use NCCL through
+# cupy.cuda.nccl, which ships with the cupy-cuda12x wheel; mpi4py needs a
+# working MPI installation (e.g. OpenMPI) on the system.
+mpi4py
