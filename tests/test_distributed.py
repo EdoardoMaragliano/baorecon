@@ -397,3 +397,29 @@ class TestReductions:
         assert env.allreduce_sum(2.5) == 2.5
         assert env.gather_x_slabs(a) is a
         np.testing.assert_array_equal(env.allreduce_inplace(a), np.ones(3))
+
+
+class TestMultiDeviceComm:
+    def test_device_ops_override_loopback(self):
+        """NCCL device collectives must win over the loopback host copies."""
+        from baorecon.utils.distributed import (
+            LoopbackComm,
+            MultiDeviceComm,
+            _NcclDeviceOps,
+        )
+
+        assert MultiDeviceComm.alltoall is _NcclDeviceOps.alltoall
+        assert MultiDeviceComm.exchange_halos is _NcclDeviceOps.exchange_halos
+        # host-side collectives stay shared-memory (thread hub)
+        assert MultiDeviceComm.allreduce_sum is LoopbackComm.allreduce_sum
+        assert MultiDeviceComm.allreduce_inplace is LoopbackComm.allreduce_inplace
+        assert MultiDeviceComm.gather_slabs is LoopbackComm.gather_slabs
+        assert MultiDeviceComm.barrier is LoopbackComm.barrier
+
+    def test_run_multi_gpu_requires_cuda(self):
+        from baorecon.utils.backend import CUPY_AVAILABLE
+        from baorecon.utils.distributed import run_multi_gpu
+
+        if not CUPY_AVAILABLE:
+            with pytest.raises(RuntimeError, match="CuPy"):
+                run_multi_gpu(lambda env: None)

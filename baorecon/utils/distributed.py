@@ -157,27 +157,17 @@ class SlabDecomp:
 
 
 # ---------------------------------------------------------------------------
-# NCCL + mpi4py communicator (the real transport)
+# NCCL communicators (the real transports)
 # ---------------------------------------------------------------------------
-class NcclComm:
-    """Device-buffer collectives over NCCL, host scalars over mpi4py.
+class _NcclDeviceOps:
+    """Device-buffer collectives shared by the NCCL-backed communicators.
 
-    The CUDA device must already be bound (``cp.cuda.Device(id).use()``)
-    before construction. All device buffers passed in must be C-contiguous
-    CuPy arrays of float32 or complex64 (complex buffers travel as float32
-    pairs, which is exact).
+    Requires ``self._nccl_mod`` (the ``cupy.cuda.nccl`` module), ``self._nccl``
+    (this endpoint's ``NcclCommunicator``), ``self.rank`` and
+    ``self.world_size``. All device buffers must be C-contiguous CuPy arrays
+    of float32 or complex64 (complex buffers travel as float32 pairs, which
+    is exact).
     """
-
-    def __init__(self, mpi_comm):
-        from cupy.cuda import nccl  # noqa: PLC0415 -- optional dependency
-
-        self._nccl_mod = nccl
-        self.mpi = mpi_comm
-        self.rank = mpi_comm.Get_rank()
-        self.world_size = mpi_comm.Get_size()
-        uid = nccl.get_unique_id() if self.rank == 0 else None
-        uid = mpi_comm.bcast(uid, root=0)
-        self._nccl = nccl.NcclCommunicator(self.world_size, uid, self.rank)
 
     @staticmethod
     def _as_flat_f32(a):
@@ -222,6 +212,25 @@ class NcclComm:
         self._nccl.recv(from_left.data.ptr, from_left.size, nccl.NCCL_FLOAT32, lo, stream)
         self._nccl.recv(from_right.data.ptr, from_right.size, nccl.NCCL_FLOAT32, hi, stream)
         nccl.groupEnd()
+
+
+class NcclComm(_NcclDeviceOps):
+    """Multi-process transport: NCCL device collectives, mpi4py host scalars.
+
+    One endpoint per MPI rank (``mpirun -np P``). The CUDA device must already
+    be bound (``cp.cuda.Device(id).use()``) before construction.
+    """
+
+    def __init__(self, mpi_comm):
+        from cupy.cuda import nccl  # noqa: PLC0415 -- optional dependency
+
+        self._nccl_mod = nccl
+        self.mpi = mpi_comm
+        self.rank = mpi_comm.Get_rank()
+        self.world_size = mpi_comm.Get_size()
+        uid = nccl.get_unique_id() if self.rank == 0 else None
+        uid = mpi_comm.bcast(uid, root=0)
+        self._nccl = nccl.NcclCommunicator(self.world_size, uid, self.rank)
 
     def allreduce_sum(self, x):
         return self.mpi.allreduce(float(x))
@@ -347,6 +356,109 @@ def run_loopback(world_size, fn):
             comms[r]._hub.barrier.abort()
 
     threads = [threading.Thread(target=_target, args=(r,)) for r in range(world_size)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for exc in errors:
+        if exc is not None and not isinstance(exc, threading.BrokenBarrierError):
+            raise exc
+    for exc in errors:
+        if exc is not None:
+            raise exc
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Single-process multi-GPU (notebook / interactive) communicator
+# ---------------------------------------------------------------------------
+class MultiDeviceComm(_NcclDeviceOps, LoopbackComm):
+    """One process, P GPUs: NCCL ``initAll`` device collectives, shared-memory
+    host reductions.
+
+    The notebook-friendly counterpart of :class:`NcclComm` (no ``mpirun``, no
+    mpi4py): every endpoint runs on its own *thread* of the same process --
+    the canonical NCCL one-thread-per-device pattern -- so device buffers move
+    over NCCL exactly as in the MPI path, while host-side collectives
+    (scalar sums, in-place array reductions, slab gathers on *numpy* arrays)
+    are plain shared-memory operations inherited from :class:`LoopbackComm`.
+    Build the endpoints with :meth:`world` and drive them with
+    :func:`run_multi_gpu`.
+    """
+
+    def __init__(self, hub, rank, nccl_comm, device_id):
+        super().__init__(hub, rank)
+        from cupy.cuda import nccl  # noqa: PLC0415 -- optional dependency
+
+        self._nccl_mod = nccl
+        self._nccl = nccl_comm
+        self.device_id = device_id
+
+    @classmethod
+    def world(cls, devices):
+        """Endpoints (one per CUDA device id in ``devices``) sharing one clique."""
+        from cupy.cuda import nccl  # noqa: PLC0415
+
+        devices = [int(d) for d in devices]
+        comms = nccl.NcclCommunicator.initAll(devices)
+        hub = _LoopbackHub(len(devices))
+        return [cls(hub, r, comms[r], devices[r]) for r in range(len(devices))]
+
+
+def run_multi_gpu(fn, devices=None):
+    """Run ``fn(env)`` once per GPU of this process -- no ``mpirun`` needed.
+
+    The interactive/notebook launcher: one thread per device executes the same
+    SPMD code the MPI path runs, with a :class:`DistEnv` whose communicator is
+    a :class:`MultiDeviceComm` endpoint. Each thread binds its device for both
+    CUDA runtimes (CuPy and numba.cuda) before calling ``fn``. Returns the
+    per-rank results in rank order; with one visible device it simply calls
+    ``fn(DistEnv.serial())``.
+
+    Example (identical results on every rank)::
+
+        from baorecon.utils.distributed import run_multi_gpu
+
+        def job(env):
+            rec = BAOReconstructor(..., device="gpu", solver_type="ifft", dist=env)
+            return rec.run_reconstruction()
+
+        data_rec, rand_rec = run_multi_gpu(job)[0]
+
+    Notes: the Python-side orchestration shares the GIL (GPU work is
+    asynchronous, so the impact is small at P <= 8, but ``mpirun`` remains the
+    recommended launcher for large production runs), and the usual slab
+    constraints apply (``Nx % P == 0``, ``Ny % P == 0``).
+    """
+    if not CUPY_AVAILABLE:
+        raise RuntimeError("run_multi_gpu requires CuPy + CUDA.")
+    if devices is None:
+        devices = list(range(cp.cuda.runtime.getDeviceCount()))
+    if len(devices) == 0:
+        raise RuntimeError("no CUDA devices visible")
+    if len(devices) == 1:
+        cp.cuda.Device(int(devices[0])).use()
+        return [fn(DistEnv.serial())]
+
+    comms = MultiDeviceComm.world(devices)
+    envs = [DistEnv(rank=r, world_size=len(devices), comm=comms[r],
+                    device_id=comms[r].device_id) for r in range(len(devices))]
+    results = [None] * len(devices)
+    errors = [None] * len(devices)
+
+    def _target(r):
+        try:
+            cp.cuda.Device(envs[r].device_id).use()
+            from numba import cuda as _numba_cuda  # noqa: PLC0415
+
+            _numba_cuda.select_device(envs[r].device_id)
+            results[r] = fn(envs[r])
+        except BaseException as exc:  # noqa: BLE001 -- reported to the caller
+            errors[r] = exc
+            comms[r]._hub.barrier.abort()
+
+    threads = [threading.Thread(target=_target, args=(r,), name=f"baorecon-gpu-{r}")
+               for r in range(len(devices))]
     for t in threads:
         t.start()
     for t in threads:

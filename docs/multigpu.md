@@ -46,6 +46,37 @@ rec = BAOReconstructor(..., device="gpu", solver_type="ifft", dist=env)
 data_rec, rand_rec = rec.run_reconstruction()   # full catalogues, every rank
 ```
 
+## Notebook / interactive use (no mpirun)
+
+`run_multi_gpu` is the single-process launcher (the `MirroredStrategy`-style
+alternative): one thread per GPU runs the same SPMD code, with NCCL
+communicators built in-process via `NcclCommunicator.initAll` -- no MPI, no
+mpi4py, works from a Jupyter cell:
+
+```python
+from baorecon.utils.distributed import run_multi_gpu
+from baorecon import BAOReconstructor
+
+def job(env):
+    rec = BAOReconstructor(..., device="gpu", solver_type="ifft", dist=env)
+    return rec.run_reconstruction()
+
+data_rec, rand_rec = run_multi_gpu(job)[0]   # all visible GPUs; identical on every rank
+```
+
+`devices=[0, 2]` selects specific GPUs; with a single visible device it falls
+back to the serial path. Host-side reductions become shared-memory operations,
+device buffers still move over NCCL, and the same slab constraints apply.
+Python-side orchestration shares the GIL (GPU work is asynchronous, so the
+impact is small at P <= 8), and pipeline *file output* stays on the mpirun
+path -- `run_multi_gpu` is meant for driving the reconstructor/solver
+interactively. For large production runs prefer `mpirun`.
+
+For a fully interactive *multi-process* session instead (each rank a real MPI
+process you can talk to cell by cell), use ipyparallel with MPI engines:
+`ipcluster start -n 4 --engines=mpi`, then drive the ranks with `%%px` and
+`auto_dist_env()` as above.
+
 ## What is distributed, and how
 
 | Piece | Decomposition | Communication |
