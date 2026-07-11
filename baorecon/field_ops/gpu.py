@@ -6,12 +6,11 @@ Mirrors :mod:`baorecon.field_ops.cpu` on the device: FFT divergence via
 
 import numpy as np
 
-try:
+from baorecon.utils.backend import CUPY_AVAILABLE
+
+if CUPY_AVAILABLE:
     import cupy as cp
     from numba import cuda
-    CUPY_AVAILABLE = cuda.is_available()
-except ImportError:
-    CUPY_AVAILABLE = False
 
 
 def divergence_FFT(vector_field, k_components):

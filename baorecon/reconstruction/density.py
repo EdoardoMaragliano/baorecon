@@ -28,12 +28,10 @@ from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
 
-try:
+from baorecon.utils.backend import CUPY_AVAILABLE
+
+if CUPY_AVAILABLE:
     import cupy as cp
-    from numba import cuda
-    CUPY_AVAILABLE = cuda.is_available()
-except ImportError:
-    CUPY_AVAILABLE = False
 
 
 class DensityManager:

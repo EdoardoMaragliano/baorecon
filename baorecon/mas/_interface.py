@@ -20,14 +20,11 @@ from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
 
-try:
-    import cupy as cp
-    from numba import cuda
-    CUPY_AVAILABLE = cuda.is_available()
-except ImportError:
-    CUPY_AVAILABLE = False
+from baorecon.utils.backend import CUPY_AVAILABLE
 
 if CUPY_AVAILABLE:
+    import cupy as cp
+
     from baorecon.mas import gpu as _gpu
 
 _VALID = ("NGP", "CIC", "TSC")

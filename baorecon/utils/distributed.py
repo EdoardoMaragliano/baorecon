@@ -1,0 +1,399 @@
+"""Single-node multi-GPU distribution utilities (slab decomposition).
+
+This module holds the pieces that are shared by every distributed component:
+
+* :class:`SlabDecomp` -- the 1-D (slab) domain-decomposition descriptor. Real
+  space is split in contiguous blocks along x (axis 0); after the distributed
+  forward rFFT, k-space is split along ky (axis 1). Pure geometry, no arrays.
+* :class:`DistEnv` -- the per-process distribution context: rank, world size,
+  the communicator, and the bound GPU. ``DistEnv.serial()`` is the ``P = 1``
+  no-communication special case used by the unchanged single-device path.
+* :class:`NcclComm` -- the real transport: NCCL (via ``cupy.cuda.nccl``) for
+  device-buffer collectives, mpi4py for host-side scalars/objects.
+* :class:`LoopbackComm` / :func:`run_loopback` -- an in-process, thread-based
+  communicator with the same interface, so all decomposition/transpose/halo
+  logic is unit-testable with numpy on hosts without GPUs or MPI.
+
+Communicator interface (duck-typed; all buffers must be C-contiguous and
+equally sized across ranks):
+
+* ``alltoall(send, recv)`` -- regular all-to-all of ``world_size`` equal
+  blocks of the flat ``send`` buffer.
+* ``exchange_halos(to_left, to_right, from_left, from_right)`` -- ring
+  exchange with the x-neighbours: ``to_left`` is delivered to rank-1's
+  ``from_right`` and ``to_right`` to rank+1's ``from_left`` (periodic ring;
+  the *caller* decides whether to use the wrapped edges when ``pbc=False``).
+* ``allreduce_sum(x)`` -- global sum of a host scalar.
+* ``barrier()``.
+"""
+
+import threading
+from dataclasses import dataclass
+
+import numpy as np
+
+from baorecon.utils.backend import CUPY_AVAILABLE
+from baorecon.utils.loggers import setup_logger
+
+logger = setup_logger(__name__)
+
+if CUPY_AVAILABLE:
+    import cupy as cp
+
+
+# ---------------------------------------------------------------------------
+# Decomposition descriptor
+# ---------------------------------------------------------------------------
+@dataclass(frozen=True)
+class SlabDecomp:
+    """Slab (1-D) decomposition of an ``(Nx, Ny, Nz)`` mesh over ``world_size`` ranks.
+
+    Real space: rank ``r`` owns the contiguous x-block
+    ``[r * nx_local, (r+1) * nx_local)``. k-space (after the distributed rfftn):
+    rank ``r`` owns the contiguous ky-block ``[r * ny_local, (r+1) * ny_local)``;
+    kx and kz stay global on every rank (kz is the reduced rfft axis).
+
+    Divisibility (``Nx % P == 0`` and ``Ny % P == 0``) is required so the FFT
+    transpose is a regular (equal-block) AllToAll; generalizing to an
+    AllToAllv is future work (see the migration plan/audit).
+    """
+
+    global_shape: tuple
+    world_size: int
+    rank: int
+
+    def __post_init__(self):
+        nx, ny, nz = (int(n) for n in self.global_shape)
+        object.__setattr__(self, "global_shape", (nx, ny, nz))
+        p = self.world_size
+        if not (0 <= self.rank < p):
+            raise ValueError(f"rank {self.rank} out of range for world_size {p}")
+        if nx % p or ny % p:
+            raise ValueError(
+                f"Slab decomposition requires Nx and Ny divisible by the number of "
+                f"ranks: got Nx={nx}, Ny={ny}, P={p}. Choose nmesh accordingly "
+                f"(remainder/AllToAllv support is future work)."
+            )
+        if nx < p:
+            raise ValueError(f"more ranks ({p}) than x-planes ({nx})")
+
+    # --- real space (x-split) ---
+    @property
+    def nx_local(self) -> int:
+        return self.global_shape[0] // self.world_size
+
+    @property
+    def x_offset(self) -> int:
+        return self.rank * self.nx_local
+
+    @property
+    def local_real_shape(self) -> tuple:
+        return (self.nx_local, self.global_shape[1], self.global_shape[2])
+
+    # --- k space (ky-split) ---
+    @property
+    def ny_local(self) -> int:
+        return self.global_shape[1] // self.world_size
+
+    @property
+    def ky_offset(self) -> int:
+        return self.rank * self.ny_local
+
+    @property
+    def nz_half(self) -> int:
+        return self.global_shape[2] // 2 + 1
+
+    @property
+    def local_k_shape(self) -> tuple:
+        return (self.global_shape[0], self.ny_local, self.nz_half)
+
+    @property
+    def owns_dc(self) -> bool:
+        """True on the rank whose ky-block contains ky = 0 (rank 0)."""
+        return self.rank == 0
+
+    # --- neighbours (periodic ring along x) ---
+    @property
+    def left_rank(self) -> int:
+        return (self.rank - 1) % self.world_size
+
+    @property
+    def right_rank(self) -> int:
+        return (self.rank + 1) % self.world_size
+
+    @property
+    def is_low_edge(self) -> bool:
+        return self.rank == 0
+
+    @property
+    def is_high_edge(self) -> bool:
+        return self.rank == self.world_size - 1
+
+    # --- particle ownership ---
+    def owner_ranks(self, pos_x, boxsize_x, pbc=True) -> np.ndarray:
+        """Owner rank of each particle from its box-frame x coordinate.
+
+        Ownership follows the paint/read kernels' cell mapping
+        ``gx = pos_x * Nx / boxsize_x``: the owner is the rank whose x-block
+        contains ``floor(gx)`` (wrapped when ``pbc``, clamped otherwise), so a
+        particle's CIC/TSC stencil always fits in its owner's halo-extended grid.
+        """
+        nx = self.global_shape[0]
+        gx = np.floor(np.asarray(pos_x, dtype=np.float64) * (nx / float(boxsize_x)))
+        gx = gx.astype(np.int64)
+        if pbc:
+            gx %= nx
+        else:
+            np.clip(gx, 0, nx - 1, out=gx)
+        return gx // self.nx_local
+
+    def owned_mask(self, pos_x, boxsize_x, pbc=True) -> np.ndarray:
+        """Boolean mask of the particles owned by this rank."""
+        return self.owner_ranks(pos_x, boxsize_x, pbc=pbc) == self.rank
+
+    def ky_slice(self, ky_full):
+        """This rank's ky block of a full 1-D ky array."""
+        return ky_full[self.ky_offset:self.ky_offset + self.ny_local]
+
+
+# ---------------------------------------------------------------------------
+# NCCL + mpi4py communicator (the real transport)
+# ---------------------------------------------------------------------------
+class NcclComm:
+    """Device-buffer collectives over NCCL, host scalars over mpi4py.
+
+    The CUDA device must already be bound (``cp.cuda.Device(id).use()``)
+    before construction. All device buffers passed in must be C-contiguous
+    CuPy arrays of float32 or complex64 (complex buffers travel as float32
+    pairs, which is exact).
+    """
+
+    def __init__(self, mpi_comm):
+        from cupy.cuda import nccl  # noqa: PLC0415 -- optional dependency
+
+        self._nccl_mod = nccl
+        self.mpi = mpi_comm
+        self.rank = mpi_comm.Get_rank()
+        self.world_size = mpi_comm.Get_size()
+        uid = nccl.get_unique_id() if self.rank == 0 else None
+        uid = mpi_comm.bcast(uid, root=0)
+        self._nccl = nccl.NcclCommunicator(self.world_size, uid, self.rank)
+
+    @staticmethod
+    def _as_flat_f32(a):
+        """Flat float32 view of a contiguous float32/complex64 device buffer."""
+        if not a.flags.c_contiguous:
+            raise ValueError("NCCL buffers must be C-contiguous")
+        if a.dtype == cp.complex64:
+            a = a.view(cp.float32)
+        elif a.dtype != cp.float32:
+            raise TypeError(f"unsupported NCCL buffer dtype {a.dtype}")
+        return a.ravel()
+
+    def _stream_ptr(self):
+        return cp.cuda.get_current_stream().ptr
+
+    def alltoall(self, send, recv):
+        nccl = self._nccl_mod
+        send = self._as_flat_f32(send)
+        recv = self._as_flat_f32(recv)
+        if send.size != recv.size or send.size % self.world_size:
+            raise ValueError("alltoall buffers must be equal-size, divisible by P")
+        cnt = send.size // self.world_size
+        stream = self._stream_ptr()
+        nccl.groupStart()
+        for peer in range(self.world_size):
+            self._nccl.send(send[peer * cnt:].data.ptr, cnt,
+                            nccl.NCCL_FLOAT32, peer, stream)
+            self._nccl.recv(recv[peer * cnt:].data.ptr, cnt,
+                            nccl.NCCL_FLOAT32, peer, stream)
+        nccl.groupEnd()
+
+    def exchange_halos(self, to_left, to_right, from_left, from_right):
+        nccl = self._nccl_mod
+        to_left, to_right = self._as_flat_f32(to_left), self._as_flat_f32(to_right)
+        from_left, from_right = self._as_flat_f32(from_left), self._as_flat_f32(from_right)
+        lo = (self.rank - 1) % self.world_size
+        hi = (self.rank + 1) % self.world_size
+        stream = self._stream_ptr()
+        nccl.groupStart()
+        self._nccl.send(to_right.data.ptr, to_right.size, nccl.NCCL_FLOAT32, hi, stream)
+        self._nccl.send(to_left.data.ptr, to_left.size, nccl.NCCL_FLOAT32, lo, stream)
+        self._nccl.recv(from_left.data.ptr, from_left.size, nccl.NCCL_FLOAT32, lo, stream)
+        self._nccl.recv(from_right.data.ptr, from_right.size, nccl.NCCL_FLOAT32, hi, stream)
+        nccl.groupEnd()
+
+    def allreduce_sum(self, x):
+        return self.mpi.allreduce(float(x))
+
+    def barrier(self):
+        self.mpi.Barrier()
+
+
+# ---------------------------------------------------------------------------
+# In-process loopback communicator (tests / CPU simulation)
+# ---------------------------------------------------------------------------
+class _LoopbackHub:
+    """Shared state for the P endpoints of a LoopbackComm world."""
+
+    def __init__(self, world_size):
+        self.world_size = world_size
+        self.barrier = threading.Barrier(world_size)
+        self.posted = [None] * world_size
+        self.lock = threading.Lock()
+
+
+class LoopbackComm:
+    """Thread-based fake communicator with the NcclComm interface.
+
+    ``LoopbackComm.world(P)`` returns the P endpoints; each must be driven
+    from its own thread (see :func:`run_loopback`). Works with numpy or cupy
+    arrays -- collectives are plain array copies under barriers -- so the
+    distributed FFT/halo logic can be verified on a CPU-only host.
+    """
+
+    def __init__(self, hub, rank):
+        self._hub = hub
+        self.rank = rank
+        self.world_size = hub.world_size
+
+    @classmethod
+    def world(cls, world_size):
+        hub = _LoopbackHub(world_size)
+        return [cls(hub, r) for r in range(world_size)]
+
+    def _post_and_sync(self, payload):
+        self._hub.posted[self.rank] = payload
+        self._hub.barrier.wait()          # all payloads visible
+
+    def _done(self):
+        self._hub.barrier.wait()          # all reads done; safe to repost
+
+    def alltoall(self, send, recv):
+        send = send.ravel()
+        recv = recv.ravel()
+        if send.size != recv.size or send.size % self.world_size:
+            raise ValueError("alltoall buffers must be equal-size, divisible by P")
+        self._post_and_sync(send)
+        cnt = send.size // self.world_size
+        for peer in range(self.world_size):
+            block = self._hub.posted[peer][self.rank * cnt:(self.rank + 1) * cnt]
+            recv[peer * cnt:(peer + 1) * cnt] = block
+        self._done()
+
+    def exchange_halos(self, to_left, to_right, from_left, from_right):
+        self._post_and_sync((to_left, to_right))
+        lo = (self.rank - 1) % self.world_size
+        hi = (self.rank + 1) % self.world_size
+        from_left[...] = self._hub.posted[lo][1]   # left neighbour's to_right
+        from_right[...] = self._hub.posted[hi][0]  # right neighbour's to_left
+        self._done()
+
+    def allreduce_sum(self, x):
+        self._post_and_sync(float(x))
+        total = sum(self._hub.posted)
+        self._done()
+        return total
+
+    def barrier(self):
+        self._hub.barrier.wait()
+
+
+def run_loopback(world_size, fn):
+    """Run ``fn(rank, comm)`` on ``world_size`` loopback ranks (one thread each).
+
+    Returns the per-rank results in rank order; re-raises the first exception.
+    """
+    comms = LoopbackComm.world(world_size)
+    results = [None] * world_size
+    errors = [None] * world_size
+
+    def _target(r):
+        try:
+            results[r] = fn(r, comms[r])
+        except BaseException as exc:  # noqa: BLE001 -- reported to the caller
+            errors[r] = exc
+            # release peers stuck on the barrier
+            comms[r]._hub.barrier.abort()
+
+    threads = [threading.Thread(target=_target, args=(r,)) for r in range(world_size)]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+    for exc in errors:
+        if exc is not None and not isinstance(exc, threading.BrokenBarrierError):
+            raise exc
+    for exc in errors:
+        if exc is not None:
+            raise exc
+    return results
+
+
+# ---------------------------------------------------------------------------
+# Distribution environment
+# ---------------------------------------------------------------------------
+@dataclass
+class DistEnv:
+    """Per-process distribution context.
+
+    ``DistEnv.serial()`` (the default everywhere) is the single-device case:
+    ``world_size == 1``, no communicator, and every component takes its
+    existing, unchanged code path.
+    """
+
+    rank: int = 0
+    world_size: int = 1
+    comm: object = None
+    device_id: int = 0
+
+    @property
+    def is_distributed(self) -> bool:
+        return self.world_size > 1
+
+    @classmethod
+    def serial(cls) -> "DistEnv":
+        return cls()
+
+    @classmethod
+    def from_mpi(cls, mpi_comm=None) -> "DistEnv":
+        """Build a DistEnv from an mpi4py communicator, binding one GPU per rank.
+
+        Binds device ``rank % n_gpus`` for BOTH CUDA runtimes in play (CuPy for
+        FFT/field ops, numba.cuda for the MAS kernels) *before* creating the
+        NCCL communicator. With a single MPI rank this degrades to
+        ``DistEnv.serial()`` (no NCCL, no communication).
+        """
+        if mpi_comm is None:
+            from mpi4py import MPI  # noqa: PLC0415 -- optional dependency
+
+            mpi_comm = MPI.COMM_WORLD
+        world_size = mpi_comm.Get_size()
+        if world_size == 1:
+            return cls.serial()
+        if not CUPY_AVAILABLE:
+            raise RuntimeError("Distributed (multi-GPU) mode requires CuPy + CUDA.")
+
+        rank = mpi_comm.Get_rank()
+        n_dev = cp.cuda.runtime.getDeviceCount()
+        device_id = rank % n_dev
+        cp.cuda.Device(device_id).use()
+        from numba import cuda as _numba_cuda  # noqa: PLC0415
+
+        _numba_cuda.select_device(device_id)
+        comm = NcclComm(mpi_comm)
+        logger.info(f"DistEnv: rank {rank}/{world_size} bound to GPU {device_id} "
+                    f"({n_dev} visible)")
+        return cls(rank=rank, world_size=world_size, comm=comm, device_id=device_id)
+
+    def decomp(self, global_shape) -> SlabDecomp:
+        return SlabDecomp(tuple(int(n) for n in global_shape), self.world_size, self.rank)
+
+    def allreduce_sum(self, x):
+        if not self.is_distributed:
+            return x
+        return self.comm.allreduce_sum(x)
+
+    def barrier(self):
+        if self.is_distributed:
+            self.comm.barrier()
