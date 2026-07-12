@@ -4,18 +4,16 @@ The iterative FFT (Burden / iFFT) displacement solver has an **opt-in, low-memor
 CPU backend** built on [pyfftw](https://pyfftw.readthedocs.io). It performs every
 forward/inverse transform **in place** on a single padded buffer instead of
 allocating a fresh array per `rfftn`/`irfftn` (that per-transform working set is
-the dominant term in the CPU peak). Combined with a streamed line-of-sight
-projection (the radial versor is evaluated on the fly), it **cuts the end-to-end
-CPU peak memory by ~55–60%** — bringing baorecon in line with `pyrecon` — with no
-change to results beyond float32 round-off.
+the dominant term in the CPU peak). This **cuts the end-to-end CPU peak memory by
+~55–60%** — bringing baorecon in line with `pyrecon` — with no change to results
+beyond float32 round-off.
 
-> **Note.** The streamed radial (`LocalLOS`) projection has since been promoted to
-> shared infrastructure (`baorecon/solvers/fft/_radial_stream.py`) and is now used
-> by the **default scipy solver** and the **GPU solver** too — not only this pyfftw
-> path. So the pyfftw-*exclusive* saving is the in-place transforms; the streamed
-> projection lowers the radial-LOS peak on every backend. The measured tables below
-> were taken when streaming was pyfftw-only and predate that change (see
-> [Measured results](#measured-results)).
+For local (radial) lines of sight, the solver also streams the projection: the
+radial versor is evaluated on the fly instead of being materialised as a grid.
+This streaming projection (`baorecon/solvers/fft/_radial_stream.py`) is shared
+infrastructure used by the pyfftw path, the default scipy solver, and the GPU
+solver alike — the memory saving specific to this backend is the in-place
+transform itself.
 
 scipy remains the default. The pyfftw path is enabled entirely through
 environment variables — no change to the reconstructor, pipeline, or any call
@@ -114,19 +112,14 @@ All are read at solve time; you can vary them run-to-run without editing code.
 BAORECON_FFT=pyfftw BAORECON_FFT_THREADS=8 python your_run.py
 ```
 
-Key behaviour:
-
-- **Unset → all cores** (`os.cpu_count()`). The pyfftw path deliberately does
-  **not** read `OMP_NUM_THREADS` / `NUMBA_NUM_THREADS` (those throttle numba and
-  BLAS, not the FFT).
-- This mirrors the **default scipy path**, which calls
-  `scipy.fft.rfftn(..., workers=-1)` — also all cores, also ignoring `OMP`.
-
-> **Fair-comparison note.** For an apples-to-apples scipy-vs-pyfftw comparison,
-> **leave `BAORECON_FFT_THREADS` unset** so both use every core. If you set it to
-> a small value, you throttle pyfftw while scipy still runs on all cores, and
-> pyfftw will look artificially slow. Set it only when you deliberately want to
-> constrain the FFT (e.g. a controlled N-thread study).
+- **Unset → all cores** (`os.cpu_count()`). The pyfftw path deliberately ignores
+  `OMP_NUM_THREADS` / `NUMBA_NUM_THREADS` (those throttle numba and BLAS, not the
+  FFT) — mirroring the default scipy path, which calls
+  `scipy.fft.rfftn(..., workers=-1)` on all cores regardless of `OMP`.
+- **For a fair scipy-vs-pyfftw comparison, leave `BAORECON_FFT_THREADS` unset**
+  so both use every core; throttling only pyfftw makes it look artificially
+  slower. Set a value only when deliberately constraining the FFT (e.g. a
+  controlled N-thread scaling study).
 
 ---
 
@@ -226,18 +219,12 @@ is in `FFTSolverCPU._compute_displacement_iterative_potential`.
 
 ## Measured results
 
-> **Caveat (superseded baseline).** These numbers were measured when the streamed
-> radial projection was exclusive to the pyfftw path — the `scipy` columns are the
-> *pre-streaming* scipy solver. The streamed projection has since been promoted to
-> the default scipy solver (and the GPU solver) via
-> `baorecon/solvers/fft/_radial_stream.py`, so today's scipy radial-LOS peak is
-> already much lower than the `scipy` column here; the remaining pyfftw-exclusive
-> saving is the in-place transforms. Treat the tables as illustrating the
-> in-place + streaming win over a non-streaming scipy baseline, pending a refreshed
-> measurement pass.
-
-Single-node measurements (AMD EPYC, all cores). `R` = one float32 grid = `N³·4 B`
-(512³ → 512 MiB).
+Single-node measurements (AMD EPYC, all cores), taken while the streamed radial
+projection was still pyfftw-only, before its promotion to shared infrastructure
+(see [How it works](#how-it-works)). The `scipy` columns below therefore reflect
+the pre-streaming solver; today's default scipy radial-LOS peak is lower than
+shown, while the saving exclusive to pyfftw remains the in-place transforms.
+`R` = one float32 grid = `N³·4 B` (512³ → 512 MiB).
 
 **Solver only, N=512, RedshiftSpace, 3 iterations:**
 
@@ -309,7 +296,9 @@ Two independent memory savings combine:
    by component, so the full `(N, N, N, 3)` gradient is never materialised. The
    unit versor `n̂(x) = x/|x|` is evaluated **on the fly** inside small parallel
    numba kernels (from the LOS geometry), so neither a 3-vector versor field nor a
-   stored `1/|x|` grid is kept.
+   stored `1/|x|` grid is kept. This projection is shared infrastructure used by
+   every backend — scipy, pyfftw, and GPU — not just this one; here it combines
+   with the in-place transforms above to lower the radial-LOS peak further.
 
 For a fixed axis the projection reduces to a single component, so the iteration
 uses just the padded buffer plus `delta` and `1/(bias·k²)`.
@@ -324,7 +313,8 @@ Relevant files:
 - `baorecon/solvers/fft/_pyfftw_cpu.py` — the in-place implementation, wisdom
   persistence, and env-var knobs.
 - `baorecon/solvers/fft/_radial_stream.py` — the streamed radial-LOS projection
-  numba kernels (versor on the fly), shared with the default scipy path.
+  numba kernels (versor on the fly), shared with the default scipy and GPU
+  solvers.
 - `baorecon/solvers/fft/_common.py` — `divergence_from_components`, the lazy
   per-component divergence used by the streamed projection.
 - `baorecon/utils/backend.py` — `PYFFTW_AVAILABLE`, `use_pyfftw()`.

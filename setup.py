@@ -3,16 +3,6 @@ from pathlib import Path
 from setuptools import setup, find_packages
 
 
-'''def read_requirements(path):
-    try:
-        return [
-            line.strip()
-            for line in Path(path).read_text(encoding="utf-8").splitlines()
-            if line.strip() and not line.strip().startswith("#") and not line.strip().startswith("-r")
-        ]
-    except FileNotFoundError:
-        return []'''
-
 def read_requirements(path):
     req_file = Path(path)
     if not req_file.exists():

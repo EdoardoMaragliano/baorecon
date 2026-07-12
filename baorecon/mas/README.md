@@ -1,4 +1,4 @@
-# mas
+# MAS
 
 Mass assignment: moving a quantity between particles and a regular mesh.
 `assign` **paints** particles onto a fresh grid (particles → mesh); `readout`

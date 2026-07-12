@@ -1,4 +1,4 @@
-# mesh
+# Mesh
 
 This package defines the mesh geometry and the line-of-sight strategies used by
 the solvers.

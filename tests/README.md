@@ -1,17 +1,18 @@
 # Tests
 
-This folder contains both the current pytest suite and historical notebooks used to
-validate the reconstruction pipeline.
+This folder contains the pytest regression suite that should be run in CI or
+during development. (Ad-hoc exploration notebooks live locally under the
+git-ignored `local_tests/`; they are not part of the tracked suite.)
 
 ## Pytest suite
-
-These are the executable regression tests that should be run in CI or during development.
 
 ### Top-level tests
 
 - `test_catalog_io.py` — catalog loading, column extraction, masking, and output-table building.
 - `test_coordinates.py` — RA/DEC/z ↔ Cartesian round-trips and coordinate input validation.
 - `test_density_manager.py` — density-field preparation, mass assignment, and PBC handling.
+- `test_dtype_propagation.py` — float32/float64 working-precision propagation through
+  the formatters, `DensityManager`, and `BAOReconstructor`.
 - `test_fft_solver.py` — `FFTSolverCPU`/`FFTSolverGPU` behaviour (analytic sine wave, GRF
   closure, mean conservation), parametrized over device.
 - `test_field_ops.py` — vector-field projection, interpolation, divergence, and smoothing operators.
@@ -19,6 +20,8 @@ These are the executable regression tests that should be run in CI or during dev
   anisotropic coarsening, and strict `nmesh` validation.
 - `test_los.py` — `FixedAxisLOS` / `LocalLOS` strategies and `project_vector_field_jit`.
 - `test_mesh.py` — `Mesh` geometry, validation, and lightweight (no large arrays) guarantees.
+- `test_mock_generator.py` — synthetic field generators in `utils/mock_generator.py`
+  (Gaussian and lognormal maps, Poisson sampling).
 - `test_naming.py` — `baorecon/io/naming.py` `NamingTokenizer`.
 - `test_radial_kernels.py` — parity of the streamed radial-LOS projection kernels
   (`_radial_stream` numba vs a numpy reference, and vs the CuPy `ElementwiseKernel`
@@ -34,10 +37,12 @@ These are the executable regression tests that should be run in CI or during dev
   pipeline (instantiation, box inference, delta mesh, potential/displacement, full
   reconstruction, interpolation, and a comparison vs `pyrecon`).
 - `test_pipeline/test_bao_pipeline.py` — the YAML-driven `ReconstructionPipeline`, including
-  saving the full set of configured outputs. 
+  saving the full set of configured outputs.
 - `tests_multigrid/test_multigrid_lib.py` — multigrid kernels and the FMG flow.
+- `tests_multigrid/test_smoother_consistency.py` — self-consistency between the `jacobi`
+  and `mcgs` smoothers (agreement with each other and with the analytic FFT reference,
+  convergence rate, stability under extra cycles).
 
 ## Notes
 
-- The pytest files are the executable regression tests; the notebooks are interactive references.
 - GPU-dependent tests are skipped automatically when no CUDA GPU / CuPy is available.

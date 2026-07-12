@@ -1,4 +1,4 @@
-# reconstruction
+# Reconstruction
 
 The core of BAO reconstruction: builds the overdensity field, solves for the
 displacement field, and shifts the data/random catalogues.

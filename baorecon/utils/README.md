@@ -1,4 +1,4 @@
-# utils
+# Utils
 
 This package groups small helper modules shared across the reconstruction pipeline.
 
