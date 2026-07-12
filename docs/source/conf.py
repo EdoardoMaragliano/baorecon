@@ -10,11 +10,12 @@ import os
 import sys
 sys.path.insert(0, os.path.abspath('../..'))
 
+import baorecon
 
 project = 'baorecon'
 copyright = '2024, Edoardo Maragliano'
 author = 'Edoardo Maragliano'
-release = '0.4.0'
+release = baorecon.__version__
 
 # -- General configuration ---------------------------------------------------
 # https://www.sphinx-doc.org/en/master/usage/configuration.html#general-configuration
