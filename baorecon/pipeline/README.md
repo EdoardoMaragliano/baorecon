@@ -61,7 +61,7 @@ output:
 
 Installing `fitsio` enables true column-subset reads for FITS inputs; without
 it, FITS reads fall back to Astropy and prune columns in memory. Parquet
-requires `pyarrow` (included in `requirements/runtime.txt`).
+requires `pyarrow` (a core `baorecon` dependency).
 
 ### Working precision
 
