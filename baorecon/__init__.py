@@ -1,5 +1,7 @@
 """Top-level package exports for baorecon."""
 
+__version__ = "0.5.0"
+
 from baorecon.api import reconstruct_positions
 from baorecon.io import Catalog, CatalogConfig, ColumnMapping, NamingTokenizer
 from baorecon.mesh.mesh import Mesh
@@ -15,6 +17,7 @@ __all__ = [
     "Mesh",
     "NamingTokenizer",
     "ReconstructionPipeline",
+    "__version__",
     "create_cosmology",
     "radec_z_to_xyz",
     "reconstruct_positions",
