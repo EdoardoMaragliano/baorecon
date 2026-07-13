@@ -19,9 +19,9 @@ def parse_args() -> argparse.Namespace:
 def main() -> int:
     args = parse_args()
     pipeline = ReconstructionPipeline(args.config)
-    data_path, random_path = pipeline.run()
-    print("Saved data catalog: {0}".format(data_path))
-    print("Saved random catalog: {0}".format(random_path))
+    saved_paths = pipeline.run()
+    for name, path in saved_paths.items():
+        print("Saved {0}: {1}".format(name, path))
     return 0
 
 
