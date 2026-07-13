@@ -74,6 +74,23 @@ class BAOReconstructor:
                 "Distributed (multi-GPU) reconstruction requires device='gpu' "
                 f"and solver_type='ifft'; got device={device!r}, solver_type={solver_type!r}."
             )
+        if dist is None and device == "gpu":
+            # Foot-gun guard: under `mpirun -np P` every rank would otherwise run
+            # a FULL single-GPU reconstruction -- all on the same default GPU.
+            try:
+                from mpi4py import MPI  # noqa: PLC0415
+
+                if MPI.COMM_WORLD.Get_size() > 1:
+                    logger.warning(
+                        "Launched under MPI with %d ranks but no `dist` was passed: "
+                        "each rank runs an INDEPENDENT single-GPU reconstruction on "
+                        "the default GPU (expect OOM at large nmesh). Pass "
+                        "dist=baorecon.utils.distributed.auto_dist_env() to "
+                        "distribute the mesh across GPUs.",
+                        MPI.COMM_WORLD.Get_size(),
+                    )
+            except ImportError:
+                pass
 
         # nmesh may be a scalar (cubic) or a per-axis (3,) array. When neither
         # nmesh nor cellsize is given, fall back to the historical 256^3 grid.
