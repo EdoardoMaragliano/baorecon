@@ -263,6 +263,7 @@ class _LoopbackHub:
         self.world_size = world_size
         self.barrier = threading.Barrier(world_size)
         self.posted = [None] * world_size
+        self.result = None
         self.lock = threading.Lock()
 
 
@@ -319,10 +320,19 @@ class LoopbackComm:
         return total
 
     def allreduce_inplace(self, host_array):
-        self._post_and_sync(host_array.copy())
-        total = sum(self._hub.posted)
-        self._done()
-        host_array[...] = total
+        # The sum is computed ONCE (rank 0) instead of once per rank: with
+        # full-catalogue (N, 3) shift buffers this is the difference between
+        # O(N*P) and O(N*P^2) host traffic -- the dominant host cost of the
+        # single-process launcher on large random catalogues.
+        self._post_and_sync(host_array)          # post the live buffers
+        if self.rank == 0:
+            total = self._hub.posted[0].copy()
+            for peer in range(1, self.world_size):
+                total += self._hub.posted[peer]
+            self._hub.result = total
+        self._hub.barrier.wait()                 # result ready
+        host_array[...] = self._hub.result
+        self._done()                             # all read; safe to reuse
         return host_array
 
     def gather_slabs(self, host_array):
