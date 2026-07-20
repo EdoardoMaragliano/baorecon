@@ -265,9 +265,12 @@ class ReconstructionPipelineInteractive:
         return output_folder, base_name, save_options
 
     def _save_grids(self, output_folder: Path, base_name: str, save_options: set) -> Dict[str, str]:
-        """Save the grid potential/displacement and the pickled reconstructor."""
+        """Save the density/potential/displacement grids and the pickled reconstructor."""
         saved_paths: Dict[str, str] = {}
         solver = self.reconstructor.solver if self.reconstructor is not None else None
+        density_manager = (
+            getattr(self.reconstructor, "_density_manager", None) if self.reconstructor is not None else None
+        )
 
         def _save_fits_image(data: np.ndarray, suffix: str) -> str:
             path = str(output_folder / (base_name + suffix))
@@ -275,6 +278,14 @@ class ReconstructionPipelineInteractive:
             fits.writeto(path, host, overwrite=True, output_verify="silentfix")
             logger.info("Saved FITS image to {0}".format(path))
             return path
+
+        if "grid_density" in save_options:
+            assert density_manager is not None
+            density = density_manager.delta_on_mesh
+            if density is not None:
+                saved_paths["grid_density"] = _save_fits_image(density, "_density.fits")
+            else:
+                logger.warning("Density not computed or available. Skipping save.")
 
         if "grid_potential" in save_options:
             assert solver is not None

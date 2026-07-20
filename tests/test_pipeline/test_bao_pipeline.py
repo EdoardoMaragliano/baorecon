@@ -98,6 +98,7 @@ def test_config_all_outputs(request, tmp_path_factory, dummy_catalogs, output_fo
             "save": [
                 "catalogs",
                 "tracer_displacements",
+                "grid_density",
                 "grid_potential",
                 "grid_displacement",
                 "reconstructor_object",
@@ -125,6 +126,7 @@ def test_pipeline_saves_all_outputs(test_config_all_outputs):
     expected_keys = {
         "data_catalog",
         "random_catalog",
+        "grid_density",
         "grid_potential",
         "grid_displacement",
         "reconstructor_object",

@@ -28,6 +28,7 @@ output:
   save:
     - catalogs              # (Default) Reconstructed catalogs (FITS or Parquet).
     - tracer_displacements  # Adds S_X, S_Y, S_Z columns to the reconstructed catalogs.
+    - grid_density          # Overdensity field (delta) on the grid (FITS image).
     - grid_potential        # Scalar potential (phi) on the grid (FITS image).
     - grid_displacement     # Displacement field (psi) on the grid (FITS image).
     - reconstructor_object  # The full BAOReconstructor object (pickle file for debugging).
@@ -43,7 +44,7 @@ Both input and output catalogs may be FITS or Parquet.
   → FITS, `.parquet`/`.pq` → Parquet), or forced with `catalog.format`.
 - **Output:** set `output.format` to `fits` (default) or `parquet`; the written
   catalog filenames get the matching extension. Grid outputs
-  (`grid_potential`, `grid_displacement`) are always FITS images.
+  (`grid_density`, `grid_potential`, `grid_displacement`) are always FITS images.
 - **Column pruning:** when `columns.keep_cols` is non-empty, only those columns
   (plus the configured coordinate/weight/ID columns) are read from disk, saving
   I/O and memory on large catalogs. Leave it empty to read every column.
@@ -96,7 +97,7 @@ catalogs and grid outputs are returned as host (NumPy) arrays either way.
 ## Main entry point
 
 - [bao_pipeline.py](bao_pipeline.py): the `ReconstructionPipeline` orchestrator — this is the current, supported implementation and the one exported as `baorecon.pipeline.ReconstructionPipeline`.
-- [bao_pipeline_straight.py](bao_pipeline_straight.py): **legacy** version, kept for reference only. It is the original monolithic pipeline (saves everything at the end, no GPU host-transfer handling and no progressive memory release) and is not exported by the package. Use `bao_pipeline.py` for all new work.
+- [bao_pipeline_interactive.py](bao_pipeline_interactive.py): **legacy** version, kept for reference only. It is the original monolithic pipeline (saves everything at the end, no GPU host-transfer handling and no progressive memory release) and is not exported by the package. Use `bao_pipeline.py` for all new work.
 
 ## Example usage
 

@@ -265,18 +265,22 @@ class ReconstructionPipeline:
         return output_folder, base_name, save_options
 
     def _save_grids(self, output_folder: Path, base_name: str, save_options: set) -> Dict[str, str]:
-        """Save the grid potential/displacement and the pickled reconstructor.
+        """Save the density/potential/displacement grids and the pickled reconstructor.
 
         Each grid is copied to host, written, and its host copy released before
-        the next (larger) grid is converted -- so the potential and displacement
-        host copies are never held at once. On the GPU path the device grid is
-        also dropped once it is on disk (freeing the pool), so the device
-        potential is gone before the 3x-larger displacement host copy is made.
-        Both are skipped when ``reconstructor_object`` is requested, since the
-        pickle serialises the solver with its grids intact.
+        the next (larger) grid is converted -- so the density, potential, and
+        displacement host copies are never held at once. On the GPU path the
+        device grid is also dropped once it is on disk (freeing the pool), so
+        e.g. the device potential is gone before the 3x-larger displacement
+        host copy is made. All drops are skipped when ``reconstructor_object``
+        is requested, since the pickle serialises the reconstructor with its
+        grids intact.
         """
         saved_paths: Dict[str, str] = {}
         solver = self.reconstructor.solver if self.reconstructor is not None else None
+        density_manager = (
+            getattr(self.reconstructor, "_density_manager", None) if self.reconstructor is not None else None
+        )
         keep_grids = "reconstructor_object" in save_options
         on_gpu = self.config.reconstruction.get("device", "cpu") == "gpu"
 
@@ -288,11 +292,11 @@ class ReconstructionPipeline:
             logger.info("Saved FITS image to {0}".format(path))
             return path
 
-        def _drop_device_grid(attr: str, still_needed: bool = False) -> None:
-            """Drop the solver's reference to a saved grid and reclaim its memory."""
-            if keep_grids or still_needed or solver is None:
+        def _drop_device_grid(obj, attr: str, still_needed: bool = False) -> None:
+            """Drop ``obj``'s reference to a saved grid and reclaim its memory."""
+            if keep_grids or still_needed or obj is None:
                 return
-            setattr(solver, attr, None)
+            setattr(obj, attr, None)
             if on_gpu:
                 try:
                     import cupy as cp
@@ -300,6 +304,16 @@ class ReconstructionPipeline:
                     cp.get_default_memory_pool().free_all_blocks()
                 except ImportError:
                     pass
+
+        if "grid_density" in save_options:
+            assert density_manager is not None
+            density = density_manager.delta_on_mesh
+            if density is not None:
+                saved_paths["grid_density"] = _save_fits_image(density, "_density.fits")
+            else:
+                logger.warning("Density not computed or available. Skipping save.")
+            del density
+            _drop_device_grid(density_manager, "_delta_on_mesh")
 
         if "grid_potential" in save_options:
             assert solver is not None
@@ -315,7 +329,7 @@ class ReconstructionPipeline:
                 "grid_displacement" in save_options
                 and getattr(solver, "_displacement", None) is None
             )
-            _drop_device_grid("_potential", still_needed=still_needed)
+            _drop_device_grid(solver, "_potential", still_needed=still_needed)
 
         if "grid_displacement" in save_options:
             assert solver is not None
@@ -325,7 +339,7 @@ class ReconstructionPipeline:
             else:
                 logger.warning("Displacement not computed or available in solver. Skipping save.")
             del displacement
-            _drop_device_grid("_displacement")
+            _drop_device_grid(solver, "_displacement")
 
         if "reconstructor_object" in save_options:
             path = str(output_folder / (base_name + "_reconstructor.pkl"))

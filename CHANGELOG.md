@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `grid_density` pipeline output option: saves the overdensity field
+  (`delta_on_mesh`) as a FITS image, alongside the existing `grid_potential` and
+  `grid_displacement` grid outputs. Follows the same host-copy-then-release
+  pattern on the GPU path, and is skipped (kept intact) when
+  `reconstructor_object` is also requested.
+
 ## [0.5.0] - 2026-07-08
 
 ### Added

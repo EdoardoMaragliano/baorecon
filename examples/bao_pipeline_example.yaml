@@ -100,6 +100,7 @@ output:
   save:
     - catalogs              # (Default) Reconstructed FITS catalogs.
     # - tracer_displacements  # Adds S_X, S_Y, S_Z columns to the FITS catalogs.
+    # - grid_density          # Overdensity field (delta) on the grid (FITS image).
     # - grid_potential        # Scalar potential (phi) on the grid (FITS image).
     # - grid_displacement     # Displacement field (psi) on the grid (FITS image).
     # - reconstructor_object  # The full BAOReconstructor object (pickle file for debugging).
