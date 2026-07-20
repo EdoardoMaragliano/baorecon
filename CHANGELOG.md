@@ -7,12 +7,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.6.0] - 2026-07-20
+
 ### Added
 - `grid_density` pipeline output option: saves the overdensity field
   (`delta_on_mesh`) as a FITS image, alongside the existing `grid_potential` and
   `grid_displacement` grid outputs. Follows the same host-copy-then-release
   pattern on the GPU path, and is skipped (kept intact) when
   `reconstructor_object` is also requested.
+- `ReconstructionPipelineInteractive` (exported as
+  `baorecon.pipeline.ReconstructionPipelineInteractive`): a memory-retaining
+  mirror of `ReconstructionPipeline` for interactive/notebook use, replacing the
+  old, unexported `bao_pipeline_straight.py`. Every intermediate array (raw and
+  Cartesian positions, reconstructed positions, solver grids) stays reachable on
+  the object instead of being released mid-run.
+- Packaging: adopted a PEP 621 `pyproject.toml` with `test`/`notebook`/`gpu`/`docs`
+  optional-dependency extras and a version dynamically single-sourced from
+  `baorecon.__version__`; `setup.py` and the `requirements/*.txt` files are
+  removed. CI now installs via these extras and tests Python 3.10-3.12, and the
+  Sphinx docs version is single-sourced the same way.
+
+### Fixed
+- `examples/run_bao_pipeline.py` now prints every path returned by
+  `pipeline.run()` instead of assuming a fixed `(data_path, random_path)`
+  two-tuple, which broke once `run()` started returning the full `saved_paths`
+  dict.
 
 ## [0.5.0] - 2026-07-08
 
@@ -113,6 +132,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reused a previous pipeline allocation.
 - `resolve_format` now raises clear errors for an unknown format or extension.
 
-[Unreleased]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.5.0...HEAD
+[Unreleased]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.6.0...HEAD
+[0.6.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.6.0
 [0.5.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.5.0
 [0.4.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.4.0
