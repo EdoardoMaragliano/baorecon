@@ -1,0 +1,68 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "baorecon"
+dynamic = ["version"]
+description = "A lightweight, modular Python package for BAO (Baryon Acoustic Oscillation) reconstruction in cosmology using the Zel'dovich approximation."
+readme = "README.md"
+license = {file = "LICENSE"}
+authors = [
+    {name = "Edoardo Maragliano", email = "edoardo.maragliano@gmail.com"},
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering :: Astronomy",
+    "Topic :: Scientific/Engineering :: Physics",
+]
+dependencies = [
+    "numpy>=1.26,<3",
+    "scipy>=1.12,<2",
+    "numba>=0.60,<1",
+    "astropy>=6.0,<9",
+    "pandas>=2.2,<4",
+    "pyarrow>=23.0,<26",
+    "PyYAML>=6.0,<7",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=7.4,<10",
+    "pytest-xdist>=3.5,<4",
+]
+notebook = [
+    "matplotlib>=3.8,<4",
+    "tqdm>=4.66,<5",
+]
+gpu = [
+    "cupy-cuda12x>=13.0,<15",
+]
+docs = [
+    "sphinx>=8.0,<10",
+    "sphinx-rtd-theme>=3.0,<4",
+]
+
+[project.urls]
+Homepage = "https://github.com/EdoardoMaragliano/baorecon"
+Repository = "https://github.com/EdoardoMaragliano/baorecon"
+Changelog = "https://github.com/EdoardoMaragliano/baorecon/blob/main/CHANGELOG.md"
+Issues = "https://github.com/EdoardoMaragliano/baorecon/issues"
+
+[tool.setuptools.dynamic]
+version = {attr = "baorecon.__version__"}
+
+[tool.setuptools.packages.find]
+include = ["baorecon*"]
+
+[tool.setuptools.exclude-package-data]
+"*" = ["*.md"]

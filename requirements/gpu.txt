@@ -1,6 +1,0 @@
-# Optional GPU acceleration (CuPy-based FFT/mass-assignment backends).
-# CuPy wheels are CUDA-toolkit-version specific; pick the package that
-# matches your system's CUDA version (see https://docs.cupy.dev/en/stable/install.html).
-# The default below targets CUDA 12.x. For CUDA 11.x, replace this line
-# with cupy-cuda11x.
-cupy-cuda12x

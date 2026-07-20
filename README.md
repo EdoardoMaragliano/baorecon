@@ -222,38 +222,30 @@ SLURM-managed machines to stay within your allocation.
 
 ## Installation
 
-You can install dependencies by scope.
-
-Runtime only (package core):
+Install from PyPI:
 
 ```bash
-pip install -r requirements/runtime.txt
+pip install baorecon
 ```
 
-Test dependencies:
+Or from a local checkout, with optional extras:
 
 ```bash
-pip install -r requirements/runtime.txt -r requirements/test.txt
+pip install .                            # runtime only
+pip install ".[test]"                    # + test suite
+pip install ".[notebook]"                # + notebook/example dependencies
+pip install ".[gpu]"                     # + CUDA GPU backend (see below)
+pip install ".[docs]"                    # + Sphinx docs build
+pip install -e ".[test,notebook,docs]"   # editable dev install, combined extras
 ```
 
-Notebook / examples dependencies:
+For the full notebook/example workflow you also need DESI's
+[`pypower`](https://github.com/cosmodesi/pypower) (the PyPI project
+literally named `pypower` is an unrelated electrical power-flow solver —
+install DESI's from source instead):
 
 ```bash
-pip install -r requirements/runtime.txt -r requirements/notebook.txt
-```
-
-Full local development environment:
-
-```bash
-pip install -r requirements.txt
-```
-
-If you install the package via `setup.py`, extras are also available:
-
-```bash
-pip install .
-pip install ".[test]"
-pip install ".[notebook]"
+pip install git+https://github.com/cosmodesi/pypower.git
 ```
 
 ### GPU support (optional)
@@ -265,13 +257,16 @@ pipeline YAML config (see
 [baorecon/pipeline/README.md](baorecon/pipeline/README.md)). The
 `multigrid` solver always runs on CPU regardless of this setting.
 
-To install the GPU extra (defaults to CuPy for CUDA 12.x; edit
-`requirements/gpu.txt` for CUDA 11.x):
+To install the GPU extra (defaults to CuPy for CUDA 12.x):
 
 ```bash
-pip install -r requirements/runtime.txt -r requirements/gpu.txt
-# or, via setup.py extras:
 pip install ".[gpu]"
+```
+
+For CUDA 11.x, install the matching CuPy build afterwards instead:
+
+```bash
+pip install cupy-cuda11x
 ```
 
 GPU support requires a CUDA-enabled GPU and a CuPy build matching your
@@ -288,7 +283,7 @@ Installing [`fitsio`](https://github.com/esheldon/fitsio) enables true
 column-subset reads for FITS catalogs, so only the configured columns are
 pulled off disk. Without it, FITS reads fall back to Astropy and prune columns
 in memory. Parquet reads always push column selection down to the reader and
-require `pyarrow` (included in `requirements/runtime.txt`).
+require `pyarrow` (a core `baorecon` dependency).
 
 ### Low-memory CPU FFT backend (optional)
 

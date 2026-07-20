@@ -1,7 +1,0 @@
-numpy
-scipy
-numba
-astropy
-pandas
-pyarrow
-PyYAML
