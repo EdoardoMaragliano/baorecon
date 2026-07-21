@@ -239,15 +239,6 @@ pip install ".[docs]"                    # + Sphinx docs build
 pip install -e ".[test,notebook,docs]"   # editable dev install, combined extras
 ```
 
-For the full notebook/example workflow you also need DESI's
-[`pypower`](https://github.com/cosmodesi/pypower) (the PyPI project
-literally named `pypower` is an unrelated electrical power-flow solver —
-install DESI's from source instead):
-
-```bash
-pip install git+https://github.com/cosmodesi/pypower.git
-```
-
 ### GPU support (optional)
 
 The density assignment, FFT-based displacement/potential solver, and field
