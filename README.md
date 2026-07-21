@@ -4,6 +4,7 @@
 `baorecon` is a Python package for BAO reconstruction in cosmology. It builds density fields from tracer catalogs, solves for the displacement field, and shifts objects to reconstruct large-scale structure using the Zel'dovich approximation.
 
 [![CI Status](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml/badge.svg)](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml)
+[![codecov](https://codecov.io/gh/EdoardoMaragliano/baorecon/graph/badge.svg)](https://codecov.io/gh/EdoardoMaragliano/baorecon)
 
 ## ✨ Why `baorecon`?
 

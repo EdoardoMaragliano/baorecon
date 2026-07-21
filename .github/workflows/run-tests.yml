@@ -51,4 +51,12 @@ jobs:
       - name: Run tests
         run: |
           # Ora pytest troverà baorecon perché è installato nell'ambiente!
-          pytest -n auto tests/
+          pytest -n auto --cov=baorecon --cov-report=xml --cov-report=term-missing tests/
+
+      - name: Upload coverage to Codecov
+        if: matrix.python-version == '3.10'
+        uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          files: ./coverage.xml
+          fail_ci_if_error: false

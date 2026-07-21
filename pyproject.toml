@@ -39,6 +39,7 @@ dependencies = [
 test = [
     "pytest>=7.4,<10",
     "pytest-xdist>=3.5,<4",
+    "pytest-cov>=5.0,<7",
 ]
 notebook = [
     "matplotlib>=3.8,<4",
