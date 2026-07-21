@@ -6,6 +6,8 @@
 [![CI Status](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml/badge.svg)](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml)
 [![codecov](https://codecov.io/gh/EdoardoMaragliano/baorecon/graph/badge.svg)](https://codecov.io/gh/EdoardoMaragliano/baorecon)
 
+<sub>Coverage excludes `@njit`/`@cuda.jit` kernel bodies: coverage.py cannot trace compiled numba code, so these are measured by test *correctness*, not line coverage (see `[tool.coverage.report]` in `pyproject.toml`).</sub>
+
 ## ✨ Why `baorecon`?
 
 In contrast to many existing implementations, `baorecon` is designed to be **lightweight, transparent, and highly modular**, stepping away from black-box C++ wrappers:

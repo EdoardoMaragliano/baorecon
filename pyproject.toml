@@ -67,3 +67,17 @@ include = ["baorecon*"]
 
 [tool.setuptools.exclude-package-data]
 "*" = ["*.md"]
+
+[tool.coverage.report]
+# `@njit`/`@cuda.jit` functions run as compiled native/PTX code, which coverage.py's
+# tracer cannot see line-by-line regardless of how thoroughly tests exercise them
+# (confirmed: e.g. baorecon.mas.cpu.cic_assign_chunks is called directly by
+# tests/test_rectangular_box.py yet still reports 0% without this exclusion).
+# Excluding the decorator line excludes the whole function body from the report;
+# correctness for these kernels is verified by the (uninstrumented) test assertions,
+# not by line coverage.
+exclude_lines = [
+    "pragma: no cover",
+    "@njit",
+    "@cuda\\.jit",
+]
