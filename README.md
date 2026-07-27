@@ -5,6 +5,7 @@
 
 [![CI Status](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml/badge.svg)](https://github.com/EdoardoMaragliano/baorecon/actions/workflows/run-tests.yml)
 [![codecov](https://codecov.io/gh/EdoardoMaragliano/baorecon/graph/badge.svg)](https://codecov.io/gh/EdoardoMaragliano/baorecon)
+[![DOI](https://zenodo.org/badge/DOI/10.5281/zenodo.20428659.svg)](https://doi.org/10.5281/zenodo.20428659)
 
 <sub>Coverage excludes `@njit`/`@cuda.jit` kernel bodies: coverage.py cannot trace compiled numba code, so these are measured by test *correctness*, not line coverage (see `[tool.coverage.report]` in `pyproject.toml`).</sub>
 
