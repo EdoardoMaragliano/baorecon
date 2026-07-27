@@ -66,6 +66,7 @@ class PoissonSolver(ABC):
         raise NotImplementedError
     
     @abstractmethod
-    def read_displacement_at(self, position: np.ndarray, mas:str = 'CIC'):
+    def read_displacement_at(self, positions: np.ndarray, mas: str = "CIC") -> np.ndarray:
+        """Read the displacement Psi at ``positions``, returning a host ``(N, 3)`` array."""
         raise NotImplementedError
     

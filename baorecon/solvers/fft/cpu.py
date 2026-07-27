@@ -9,6 +9,7 @@ never modified. The line-of-sight projection is delegated to an injected
 import numpy as np
 import scipy.fft as sfft
 
+from baorecon.field_ops import interpolate_vector_field
 from baorecon.solvers._interface import PoissonSolver
 from baorecon.solvers.fft._common import (
     build_inv_k2,
@@ -20,6 +21,7 @@ from baorecon.solvers.fft._radial_stream import (
     reconstruct_parallel_vector,
 )
 from baorecon.utils.backend import use_pyfftw
+from baorecon.utils.formatters import format_mas
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
@@ -28,10 +30,11 @@ class FFTSolverCPU(PoissonSolver):
     """FFT-based Poisson/Zel'dovich solver on the CPU."""
 
     def __init__(self, delta_on_mesh, mesh, los=None, f=None, bias=1.0,
-                 RSDspace="RealSpace", n_iterations=3) -> None:
+                 RSDspace="RealSpace", n_iterations=3, pbc=False) -> None:
         super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace)
         self.los = los
         self.n_iterations = n_iterations
+        self._pbc = pbc
         self._complex_j = np.complex64(1j)
         self._k_host = None
 
@@ -217,5 +220,13 @@ class FFTSolverCPU(PoissonSolver):
 
             self._potential = sfft.irfftn(phi_k, s=self.delta_on_mesh.shape, workers=-1)
             
-    def read_displacement_at(self, pos):
-            raise NotImplementedError("Still working on this! Requires to move the logic of the interpolation from bao_reconstructor to here.")
+    def read_displacement_at(self, positions, mas="CIC"):
+        """Interpolate the spectral displacement grid at ``positions`` (host ``(N, 3)``)."""
+        return interpolate_vector_field(
+            pos=positions,
+            field=self.displacement,
+            boxsize=self.mesh.boxsize,
+            MAS=format_mas(mas),
+            pbc=self._pbc,
+            dtype=self.mesh.dtype,
+        )

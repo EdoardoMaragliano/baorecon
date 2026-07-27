@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from baorecon.field_ops import interpolate_vector_field, project_vector_field
+from baorecon.field_ops import project_vector_field
 from baorecon.mesh.los import FixedAxisLOS, LocalLOS
 from baorecon.mesh.mesh import Mesh
 from baorecon.reconstruction.density import DensityManager
@@ -181,6 +181,7 @@ class BAOReconstructor:
                     bias=self._bias,
                     RSDspace=self._RSDspace,
                     n_iterations=n_iter,
+                    pbc=self._pbc,
                 )
             else:  # multigrid 
                 delta_on_mesh = self.delta_on_mesh
@@ -277,27 +278,11 @@ class BAOReconstructor:
         else:
             pos_for_interp = positions
 
-        if self._solver_type == 'ifft':
-            # The GPU solver keeps the displacement field on the device, so the
-            # read-out runs there and returns a CuPy array. Bring just the small
-            # per-particle result (N, 3) back to host -- the rest of the shift
-            # math is host-side numpy.
-            shifts = interpolate_vector_field(
-                pos=pos_for_interp,
-                field=self.solver.displacement,
-                boxsize=self.mesh.boxsize,
-                MAS=self.MAS,
-                pbc=self._pbc,
-                dtype=self.mesh.dtype,
-            )
-            if CUPY_AVAILABLE and isinstance(shifts, cp.ndarray):
-                shifts = cp.asnumpy(shifts)
-            return shifts
-
-        elif self._solver_type == 'multigrid':
-            return self.solver.read_displacement_at(pos_for_interp, mas=self.MAS)
-        else:
-            raise ValueError("Unsupported solver")
+        # Every solver reads the displacement out through the same interface and
+        # returns a host (N, 3) array; the FFT/multigrid difference (interpolate a
+        # spectral Psi grid vs. differentiate the potential on the fly) is hidden
+        # behind read_displacement_at.
+        return self.solver.read_displacement_at(pos_for_interp, mas=self.MAS)
 
     def _get_rsd_displacement(self, tracer_psi: np.ndarray, tracer_pos: np.ndarray) -> np.ndarray:
         if self._RSDspace == "RealSpace":

@@ -8,6 +8,7 @@ asked for, is recomputed from the device-resident displacement rather than from
 a stored psi_k grid.
 """
 
+from baorecon.field_ops import interpolate_vector_field
 from baorecon.solvers._interface import PoissonSolver
 from baorecon.solvers.fft._common import (
     build_inv_k2,
@@ -15,6 +16,7 @@ from baorecon.solvers.fft._common import (
     prepare_k_components,
 )
 from baorecon.utils.backend import get_fft_backend
+from baorecon.utils.formatters import format_mas
 from baorecon.utils.loggers import setup_logger
 
 try:
@@ -83,10 +85,11 @@ class FFTSolverGPU(PoissonSolver):
     """FFT-based Poisson/Zel'dovich solver on the GPU (CuPy)."""
 
     def __init__(self, delta_on_mesh, mesh, los=None, f=None, bias=1.0,
-                 RSDspace="RealSpace", n_iterations=3) -> None:
+                 RSDspace="RealSpace", n_iterations=3, pbc=False) -> None:
         super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace)
         self.los = los
         self.n_iterations = n_iterations
+        self._pbc = pbc
         self.backend = get_fft_backend("gpu")
         self.xp = self.backend.xp
         self.fft = self.backend.fft
@@ -274,6 +277,21 @@ class FFTSolverGPU(PoissonSolver):
         potential_dev = self.fft.irfftn(phi_k, s=self.delta_on_mesh.shape, axes=(0, 1, 2))
         self._potential = self.backend.to_host(potential_dev)
 
-    def read_displacement_at(self, position, mas = 'CIC'):
-        # TODO
-        pass
+    def read_displacement_at(self, positions, mas="CIC"):
+        """Interpolate the device-resident displacement grid at ``positions``.
+
+        The interpolation runs on the device (``self.displacement`` is a CuPy
+        array); only the small per-particle ``(N, 3)`` result is brought back to
+        host so the downstream shift math stays host-side numpy.
+        """
+        shifts = interpolate_vector_field(
+            pos=positions,
+            field=self.displacement,
+            boxsize=self.mesh.boxsize,
+            MAS=format_mas(mas),
+            pbc=self._pbc,
+            dtype=self.mesh.dtype,
+        )
+        if _cupy is not None and isinstance(shifts, _cupy.ndarray):
+            shifts = _cupy.asnumpy(shifts)
+        return shifts

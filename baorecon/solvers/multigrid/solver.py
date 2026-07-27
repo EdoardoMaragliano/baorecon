@@ -27,7 +27,7 @@ from baorecon.solvers.multigrid._kernels import (
     residual_jit,
     multicolor_gs_jit
 )
-from baorecon.utils.formatters import round_to_multigrid_friendly
+from baorecon.utils.formatters import format_mas, round_to_multigrid_friendly
 from baorecon.utils.loggers import setup_logger
 from baorecon.mesh.los import FixedAxisLOS
 
@@ -335,21 +335,22 @@ class MultigridSolver(PoissonSolver):
     def read_displacement_at(self, positions: np.ndarray, mas: str = "CIC") -> np.ndarray:
         if self._potential is None:
             self._compute_potential_mesh()
-        
+
+        mas = format_mas(mas)
         disp = np.empty_like(positions)
         nmesh = np.asarray(self.mesh.nmesh, dtype=np.int32)
-        
-        if mas.lower() == "cic":
+
+        if mas == "CIC":
             differentiate_potential_jit_cic(
-                self.potential.reshape(tuple(nmesh)), positions, disp, 
+                self.potential.reshape(tuple(nmesh)), positions, disp,
                 nmesh, offset_x=0, boxsize=self.mesh.boxsize
             )
-        elif mas.lower() == "tsc":
+        elif mas == "TSC":
             differentiate_potential_tsc_jit(
-                self.potential.reshape(tuple(nmesh)), positions, disp, 
-                nmesh, self.mesh.boxsize 
+                self.potential.reshape(tuple(nmesh)), positions, disp,
+                nmesh, self.mesh.boxsize
             )
         else:
-            raise ValueError(f"MAS {mas} non supportato.")
-            
+            raise ValueError(f"MAS {mas!r} not supported by the multigrid read-out (use 'CIC' or 'TSC').")
+
         return disp
