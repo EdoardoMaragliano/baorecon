@@ -119,4 +119,10 @@ def divergence_from_components(get_component, k_comps, rfftn, irfftn, xp):
             div_k = v_k          # reuse the first transform as the accumulator
         else:
             div_k += v_k
+        # Drop the reference now that div_k owns (or has absorbed) the transform:
+        # ``v_k = rfftn(...)`` evaluates the call *before* rebinding the name, so
+        # holding on here would keep the previous half-grid alive across the next
+        # transform -- three of them at once instead of two. On i=0 this only
+        # releases the alias; div_k stays the owner.
+        v_k = None
     return irfftn(div_k, grid_shape)

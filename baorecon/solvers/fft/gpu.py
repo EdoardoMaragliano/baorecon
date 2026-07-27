@@ -170,14 +170,14 @@ class FFTSolverGPU(PoissonSolver):
             ka = k_bcast[axis]                      # k along the LOS axis
         elif radial and n_iterations > 0:
             # Radial LOS geometry as scalars for the on-the-fly versor, plus the
-            # parallel magnitude s and a reused scatter scratch (no versor grid).
+            # parallel magnitude s (no versor grid). The scatter scratch is not
+            # allocated here: the loop below recycles the last gradient component's
+            # buffer for it, and the scaled potential lives in delta_k in place.
             mc, cs = self.los.min_corner, self.los.cell_size
             min_x, min_y, min_z = float(mc[0]), float(mc[1]), float(mc[2])
             cell_x, cell_y, cell_z = float(cs[0]), float(cs[1]), float(cs[2])
             ny, nz = int(delta_dev.shape[1]), int(delta_dev.shape[2])
             s = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)            # s = grad . n_hat
-            proj_scratch = xp.empty(delta_dev.shape, dtype=delta_dev.dtype)  # s * n_hat
-            scaled_k = xp.empty_like(delta_k)   # reused complex scratch: delta_k * inv_k2_bias
         elif n_iterations > 0:
             raise TypeError(
                 f"FFTSolverGPU does not support line-of-sight strategy "
@@ -185,8 +185,14 @@ class FFTSolverGPU(PoissonSolver):
                 f"'.axis') or LocalLOS (exposes '.min_corner')."
             )
 
+        correction = None
         for iteration in range(n_iterations):
             logger.info(f"Iteration {iteration + 1}")
+
+            # The previous iteration's correction is spent (delta_k holds its
+            # transform). Release it here, before the new one is allocated, or the
+            # two coexist for the whole solve of this iteration.
+            correction = None
 
             if axis is not None:
                 # Gradient of the potential along the LOS axis: grad_a = d_a phi.
@@ -205,14 +211,26 @@ class FFTSolverGPU(PoissonSolver):
                 # Project the gradient onto the radial LOS: accumulate the parallel
                 # magnitude s = grad.n_hat one gradient component at a time, with the
                 # versor evaluated on the fly by the device kernel (no versor grid).
-                xp.multiply(delta_k, inv_k2_bias, out=scaled_k)
-                del delta_k
-                scaled_k *= -self._complex_j
+                # delta_k comes straight out of an rfftn (above, or at the end of
+                # the previous iteration) and nothing else references it, so scale
+                # the potential *in place* rather than into a second complex grid.
+                delta_k *= inv_k2_bias
+                delta_k *= -self._complex_j
                 for i in range(3):
-                    xp.multiply(scaled_k, k_bcast[i], out=temp_k_comp)
+                    xp.multiply(delta_k, k_bcast[i], out=temp_k_comp)
+                    # Drop the previous component before allocating the next one,
+                    # so the allocator reuses that block instead of transiently
+                    # holding two full real grids.
+                    grad_i = None
                     grad_i = self.fft.irfftn(temp_k_comp, s=delta_dev.shape)
                     _project_grad_onto_los(grad_i, i, min_x, min_y, min_z,
                                            cell_x, cell_y, cell_z, ny, nz, int(i == 0), s)
+                del delta_k
+                # grad_i is dead once s is accumulated: recycle its buffer as the
+                # scatter scratch instead of keeping a dedicated grid alive for the
+                # whole routine.
+                proj_scratch = grad_i
+                grad_i = None
                 self.xp.get_default_memory_pool().free_all_blocks()
 
                 # Divergence of the parallel field s*n_hat, each component scattered
@@ -224,6 +242,7 @@ class FFTSolverGPU(PoissonSolver):
 
                 correction = divergence_from_components(
                     _parallel_component, k_comps, _rfftn, _irfftn, xp)
+                del proj_scratch
 
             # Burden update: reconstructed density = delta - f * div(parallel)
             # (with the RSD factor 1/(1+beta) on the first iteration).
@@ -233,8 +252,11 @@ class FFTSolverGPU(PoissonSolver):
             xp.add(delta_dev, correction, out=correction)
             delta_k = self.fft.rfftn(correction)
 
+        # The converged density now lives in delta_k, so the last correction is
+        # dead: release it before the (3 U) displacement grid is allocated below.
+        correction = None
         if n_iterations > 0 and radial:
-            del s, proj_scratch, scaled_k
+            del s
 
         # Converged density -> displacement psi = grad(phi), phi = delta/(bias k^2),
         # built and kept on the device (the potential is recomputed from psi on demand).
