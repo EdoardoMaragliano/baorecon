@@ -7,6 +7,29 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.7.0] - 2026-07-27
+
+### Added
+- `read_displacement_at` is now implemented on the FFT solvers
+  (`FFTSolverCPU`/`FFTSolverGPU`): it interpolates the spectral displacement grid
+  at the requested positions and returns a host `(N, 3)` array, matching the
+  multigrid solver. The GPU solver keeps the field on the device and brings only
+  the per-particle result back to host.
+- The FFT solvers accept `pbc` as a constructor argument, so the periodic-wrap
+  behaviour of the displacement read-out is configured on the solver instead of
+  the caller.
+- `BAOReconstructor.interpolate_displacement` (real-space displacement at the
+  tracer positions) and `BAOReconstructor.get_rsd_displacement` (the RSD
+  contribution to the displacement) are now public, documented methods.
+
+### Changed
+- `BAOReconstructor` reads every solver out through the single
+  `read_displacement_at` interface instead of branching on `solver_type`; the
+  FFT/multigrid difference (interpolate a spectral Psi grid vs. differentiate the
+  potential on the fly) is now hidden behind the solver.
+- Mass-assignment-scheme (`MAS`) case handling is standardized through
+  `format_mas` across the FFT and multigrid solvers.
+
 ## [0.6.0] - 2026-07-20
 
 ### Added
