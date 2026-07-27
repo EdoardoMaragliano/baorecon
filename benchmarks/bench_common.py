@@ -71,7 +71,13 @@ CSV_COLUMNS: Tuple[str, ...] = (
 # Default cubic box side (Mpc/h) used by the box-based benchmarks.
 BOXSIZE = 1000.0
 
-RESULTS_DIR = Path(__file__).resolve().parent / "results"
+# Output directory for CSVs. Override with BAORECON_BENCH_RESULTS (absolute path,
+# or a name relative to benchmarks/) to keep per-node runs from clobbering each
+# other, e.g. BAORECON_BENCH_RESULTS=results_teogpu02.
+_RESULTS_ENV = os.environ.get("BAORECON_BENCH_RESULTS", "results")
+RESULTS_DIR = Path(_RESULTS_ENV)
+if not RESULTS_DIR.is_absolute():
+    RESULTS_DIR = Path(__file__).resolve().parent / RESULTS_DIR
 FIGURES_DIR = Path(__file__).resolve().parent / "figures"
 # Repo root (parent of benchmarks/); put on a worker's PYTHONPATH so it can import
 # baorecon even from a plain checkout that was never ``pip install``-ed.

@@ -46,6 +46,7 @@ os.environ["BAORECON_FFT_THREADS"] = THREADS
 
 
 import argparse
+from pathlib import Path
 
 import numpy as np
 
@@ -200,7 +201,8 @@ def worker(spec):
 # ---------------------------------------------------------------------------
 # Parent side (orchestration only -- no baorecon / pyrecon imports)
 # ---------------------------------------------------------------------------
-def run(n_particles, nmeshes, repeats, solver, mas_parallel, smoother, fft, skip_pyrecon=False):
+def run(n_particles, nmeshes, repeats, solver, mas_parallel, smoother, fft,
+        skip_pyrecon=False, gpu_only=False):
     info = bc.system_info()
     # Stamp the run-constant knobs into the CSV provenance header (they are
     # single-valued per invocation, so they live here + in the filename rather
@@ -217,12 +219,20 @@ def run(n_particles, nmeshes, repeats, solver, mas_parallel, smoother, fft, skip
     print(f"GPU available: {bc.GPU_AVAILABLE}\n")
     print(f"mas parallel is {mas_parallel}")
 
-    backends = ["baorecon_cpu"]
-    if bc.GPU_AVAILABLE and solver == "ifft":
-        backends.append("baorecon_gpu")
-    if not skip_pyrecon:
-        backends.append("pyrecon")
-    
+    if gpu_only:
+        # GPU ifft only: no CPU baorecon, no pyrecon.
+        if not (bc.GPU_AVAILABLE and solver == "ifft"):
+            raise SystemExit("--gpu_only requires a visible GPU and --solver ifft "
+                             f"(GPU_AVAILABLE={bc.GPU_AVAILABLE}, solver={solver})")
+        backends = ["baorecon_gpu"]
+    else:
+        backends = ["baorecon_cpu"]
+        if bc.GPU_AVAILABLE and solver == "ifft":
+            backends.append("baorecon_gpu")
+        if not skip_pyrecon:
+            backends.append("pyrecon")
+    print(f"backends: {backends}")
+
 
     # The FFT backend only affects the CPU ifft path; warn when it cannot take
     # effect so a 'pyfftw' request on multigrid/GPU is not silently ignored.
@@ -251,8 +261,8 @@ def run(n_particles, nmeshes, repeats, solver, mas_parallel, smoother, fft, skip
         name += f"_{smoother}"
     elif solver == "ifft":
         name += f"_{fft}"
-    #if bc.GPU_AVAILABLE:
-    #    name += "_gpu"
+    if gpu_only:
+        name += "_gpu"
     bc.save_csv(bc.RESULTS_DIR / f"{name}.csv", rows, info)
     return rows
 
@@ -277,10 +287,27 @@ def main():
     parser.add_argument("--mas_parallel", action="store_true",
                         help="Enable parallel mass assignment in baorecon")
     parser.add_argument("--skip_pyrecon", action="store_true")
+    parser.add_argument("--gpu_only", action="store_true",
+                        help="benchmark only baorecon_gpu (implies ifft); skips "
+                             "baorecon_cpu and pyrecon.")
+    parser.add_argument("--nmesh", type=int, nargs="+", default=None,
+                        help=f"mesh sizes to sweep (default {NMESH})")
+    parser.add_argument("--n_particles", type=int, nargs="+", default=None,
+                        help=f"particle counts to sweep (default {N_PARTICLES})")
+    parser.add_argument("--results_dir", type=str, default=None,
+                        help="output directory for the CSV; absolute, or relative "
+                             "to benchmarks/ (e.g. results_teogpu02). Overrides "
+                             "BAORECON_BENCH_RESULTS.")
     parser.add_argument('--debug', action="store_true")
     parser.add_argument("--worker", type=str, help="Internal use by bench_common")
 
     args = parser.parse_args()
+
+    if args.results_dir is not None:
+        results_dir = Path(args.results_dir)
+        if not results_dir.is_absolute():
+            results_dir = Path(__file__).resolve().parent / results_dir
+        bc.RESULTS_DIR = results_dir
 
     # Debug switch: run baorecon directly so errors surface on screen
     if args.debug:
@@ -302,11 +329,15 @@ def main():
 
 
     if args.quick:
-        run([int(1e4), int(1e5)], [64], repeats=max(2, args.repeats), solver=args.solver,
-            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft, skip_pyrecon=args.skip_pyrecon)
+        run(args.n_particles or [int(1e4), int(1e5)], args.nmesh or [64],
+            repeats=max(2, args.repeats), solver=args.solver,
+            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft,
+            skip_pyrecon=args.skip_pyrecon, gpu_only=args.gpu_only)
     else:
-        run(N_PARTICLES, NMESH, repeats=args.repeats, solver=args.solver,
-            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft, skip_pyrecon=args.skip_pyrecon)
+        run(args.n_particles or N_PARTICLES, args.nmesh or NMESH,
+            repeats=args.repeats, solver=args.solver,
+            mas_parallel=args.mas_parallel, smoother=args.smoother, fft=args.fft,
+            skip_pyrecon=args.skip_pyrecon, gpu_only=args.gpu_only)
 
 
 if __name__ == "__main__":
