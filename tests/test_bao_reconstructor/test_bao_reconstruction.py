@@ -109,7 +109,7 @@ def test_bao_reconstructor_interpolate_displacement():
 
     recon = BAOReconstructor(data_pos=data_pos, random_pos=random_pos, boxsize=boxsize, f=0.88, bias=1.7,
                              nmesh=16, boxcentre=np.array([boxsize / 2] * 3), threshold_randoms=0.01)
-    psi_tracers = recon._interpolate_displacement(data_pos)
+    psi_tracers = recon.interpolate_displacement(data_pos)
     assert psi_tracers.shape == (50, 3)
     assert np.isfinite(psi_tracers).all()
 

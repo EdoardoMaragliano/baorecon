@@ -271,7 +271,27 @@ class BAOReconstructor:
         logger.info(f"solver args {self._solver_args}")
         logger.info("=" * 60)
 
-    def _interpolate_displacement(self, positions: np.ndarray, survey_frame: bool = True) -> np.ndarray:
+    def interpolate_displacement(self, positions: np.ndarray, survey_frame: bool = True) -> np.ndarray:
+        """Real-space displacement field Psi at the tracer positions.
+
+        Reads the solved displacement out of the active solver at ``positions``
+        (interpolating the spectral Psi grid for FFT, differentiating the
+        potential on the fly for multigrid) and returns a host ``(N, 3)`` array.
+        No redshift-space term is added here; see :meth:`get_rsd_displacement`.
+
+        Parameters
+        ----------
+        positions : np.ndarray
+            Tracer positions, shape ``(N, 3)``.
+        survey_frame : bool, default True
+            If True the positions are in the survey frame and are mapped to the
+            box frame before the read-out; if False they are already box-frame.
+
+        Returns
+        -------
+        np.ndarray
+            The displacement ``Psi(positions)``, shape ``(N, 3)``.
+        """
         if survey_frame:
             pos_for_interp = survey_to_box_frame(positions, self._density_manager.min_corner,
                                                  self._boxsize, pbc=self._pbc, dtype=self._dtype)
@@ -284,7 +304,30 @@ class BAOReconstructor:
         # behind read_displacement_at.
         return self.solver.read_displacement_at(pos_for_interp, mas=self.MAS)
 
-    def _get_rsd_displacement(self, tracer_psi: np.ndarray, tracer_pos: np.ndarray) -> np.ndarray:
+    def get_rsd_displacement(self, tracer_psi: np.ndarray, tracer_pos: np.ndarray) -> np.ndarray:
+        """Redshift-space distortion (RSD) contribution to the displacement.
+
+        Projects the real-space displacement ``tracer_psi`` onto the line of
+        sight and scales it by the growth rate ``f``, giving the extra
+        ``f * (Psi . n_hat) n_hat`` term that must be added to the real-space
+        displacement in redshift space. The line of sight is per-tracer radial
+        (local LOS) or a fixed axis (plane-parallel), matching the reconstructor
+        configuration. Returns zeros when ``RSDspace`` is ``'RealSpace'``.
+
+        Parameters
+        ----------
+        tracer_psi : np.ndarray
+            Real-space displacement at the tracers, shape ``(N, 3)``, as returned
+            by :meth:`interpolate_displacement`.
+        tracer_pos : np.ndarray
+            Tracer positions in the survey frame, shape ``(N, 3)`` (used to build
+            the local line of sight).
+
+        Returns
+        -------
+        np.ndarray
+            The RSD displacement contribution, shape ``(N, 3)``.
+        """
         if self._RSDspace == "RealSpace":
             logger.warning("RSD displacement requested but RSDspace is 'RealSpace'. Returning zeros.")
             return np.zeros_like(tracer_psi)
@@ -308,11 +351,11 @@ class BAOReconstructor:
     def _shift_gals(self) -> np.ndarray:
         if self._RSDspace == "RealSpace":
             logger.info("Computing displacement for galaxies (real space)...")
-            return self.data_pos - self._interpolate_displacement(self.data_pos)
+            return self.data_pos - self.interpolate_displacement(self.data_pos)
         elif self._RSDspace == "RedshiftSpace":
             logger.info("Computing RSD displacement for galaxies...")
-            tracer_psi = self._interpolate_displacement(self.data_pos)
-            rsd = self._get_rsd_displacement(tracer_psi, self.data_pos)
+            tracer_psi = self.interpolate_displacement(self.data_pos)
+            rsd = self.get_rsd_displacement(tracer_psi, self.data_pos)
             tracer_psi += rsd
             return self.data_pos - tracer_psi
         raise ValueError(f"Unknown RSDspace: {self._RSDspace}")
@@ -321,15 +364,15 @@ class BAOReconstructor:
         if self._rectype == "rec-sym":
             logger.info("Computing displacement for randoms (symmetric reconstruction)...")
             if self._RSDspace == "RealSpace":
-                return self.random_pos - self._interpolate_displacement(self.random_pos, survey_frame=True)
+                return self.random_pos - self.interpolate_displacement(self.random_pos, survey_frame=True)
             elif self._RSDspace == "RedshiftSpace":
-                tracer_psi = self._interpolate_displacement(self.random_pos, survey_frame=True)
-                rsd = self._get_rsd_displacement(tracer_psi, self.random_pos)
+                tracer_psi = self.interpolate_displacement(self.random_pos, survey_frame=True)
+                rsd = self.get_rsd_displacement(tracer_psi, self.random_pos)
                 tracer_psi += rsd
                 return self.random_pos - tracer_psi
             raise ValueError(f"Unknown RSDspace: {self._RSDspace}")
         elif self._rectype == "rec-iso":
-            tracer_psi = self._interpolate_displacement(self.random_pos, survey_frame=True)
+            tracer_psi = self.interpolate_displacement(self.random_pos, survey_frame=True)
             return self.random_pos - tracer_psi
         raise ValueError(f"Unknown rectype: {self._rectype}")
 
