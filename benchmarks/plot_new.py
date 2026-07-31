@@ -15,6 +15,7 @@ Run::
 
 from __future__ import annotations
 
+import argparse
 from pathlib import Path
 from typing import Optional
 
@@ -41,6 +42,72 @@ STYLE = {
     "pyrecon": {"color": "#2ca02c", "label": "pyrecon"},
 }
 BACKEND_ORDER = ["baorecon_cpu", "baorecon_gpu", "pyrecon"]
+
+# Per-method styling for the reconstructor figures, which compare solver variants
+# (one series per method) rather than backends. pyrecon is split by the solver it
+# was run with: its ifft and multigrid timings come from different algorithms and
+# must not collapse into a single "PyRecon" bar.
+METHOD_STYLE = {
+    "IFFT (PyFFTW)": "#1f77b4",
+    "IFFT (SciPy)": "#ff7f0e",
+    "Multigrid (Jacobi)": "#d62728",
+    "Multigrid (MCGS)": "#9467bd",
+    "PyRecon (IFFT)": "#2ca02c",
+    "PyRecon (Multigrid)": "#8c564b",
+}
+METHOD_ORDER = list(METHOD_STYLE)
+
+
+def _solver_label(stem: str) -> tuple[str, str]:
+    """Map a ``bao_reconstructor_*.csv`` stem to (solver, variant) labels.
+
+    The variant is the FFT backend for ifft and the smoother for multigrid -- the
+    knob that ``bench_bao_reconstructor.py`` encodes in the filename because it is
+    constant per run.
+    """
+    base = stem.lower()
+    if "ifft" in base:
+        variant = "PyFFTW" if "pyfftw" in base else "SciPy" if "scipy" in base else ""
+        return "IFFT", variant
+    variant = "Jacobi" if "jacobi" in base else "MCGS" if "mcgs" in base else ""
+    return "Multigrid", variant
+
+
+def _load_reconstructor_methods(figure_tag: str) -> Optional[pd.DataFrame]:
+    """Concatenate the bao_reconstructor CSVs, tagging each row with its method."""
+    files = sorted(RESULTS_DIR.glob("bao_reconstructor_*.csv"))
+    if not files:
+        print(f"[skip] {figure_tag}: no solver files found")
+        return None
+
+    dfs = []
+    for f in files:
+        df = _load(f.name)
+        if df is None:
+            continue
+        solver, variant = _solver_label(f.stem)
+        full = f"{solver} ({variant})" if variant else solver
+        # baorecon rows carry the solver variant; pyrecon only ever ran the bare
+        # solver, so it is labelled by that alone.
+        df["method"] = df["backend"].map(
+            lambda b: f"PyRecon ({solver})" if b == "pyrecon" else full)
+        # The GPU backend has its own figure (fig4); keep these CPU-only.
+        df = df[df["backend"] != "baorecon_gpu"]
+        dfs.append(df)
+
+    if not dfs:
+        return None
+    return pd.concat(dfs, ignore_index=True)
+
+
+def _method_pivot(df: pd.DataFrame, value: str) -> tuple[pd.DataFrame, list, list]:
+    """Pivot to nmesh x method, returning the frame plus its column order/colours."""
+    pivot = df.pivot_table(index="nmesh", columns="method", values=value,
+                           aggfunc="mean")
+    methods = [m for m in METHOD_ORDER if m in pivot.columns]
+    # Anything unrecognised still gets drawn, just after the known methods.
+    methods += [m for m in pivot.columns if m not in METHOD_ORDER]
+    return pivot[methods], methods, [METHOD_STYLE.get(m, "#7f7f7f") for m in methods]
 
 
 def _load(name: str) -> Optional[pd.DataFrame]:
@@ -152,74 +219,30 @@ def figure_fft_solver():
 # Figure 3: end-to-end pipeline time vs N
 # ---------------------------------------------------------------------------
 def figure_reconstructor_time():
-    # 1. Trova tutti i file dei solver nella cartella results
-    files = list(RESULTS_DIR.glob("bao_reconstructor_*.csv"))
-    if not files:
-        print("[skip] fig3: no solver files found")
+    df = _load_reconstructor_methods("fig3")
+    if df is None:
         return
-        
-    # 2. Carica e concatena TUTTI i file trovati
-    dfs = []
-    for f in files:
-        df = _load(f.name)
-        if df is not None:
-            # Identificazione dinamica del solver e del backend FFT
-            fname_base = f.stem.lower()
-            
-            # Identifica il solver
-            solver = "Ifft" if "ifft" in fname_base else "Multigrid"
-            
-            # Identifica il backend FFT per le etichette
-            backend_label = ""
-            if "pyfftw" in fname_base:
-                backend_label = " (Pyfftw)"
-            elif "scipy" in fname_base:
-                backend_label = " (Scipy)"
-            
-            df["solver"] = f"{solver}{backend_label}"
-            dfs.append(df)
-            
-    if not dfs:
-        return
-    df = pd.concat(dfs, ignore_index=True)
-    
-    # 3. Pivot: usiamo nmesh e solver come indici
-    df_pivot = df.pivot_table(
-        index=["nmesh", "solver"], 
-        columns="backend", 
-        values="time_mean", 
-        aggfunc="mean"
-    )
-    
-    # 4. Plot
+
+    times, methods, colors = _method_pivot(df, "time_mean")
+    # time_std is np.std over --repeats samples; it is identically 0 when the
+    # benchmark ran with repeats=1, in which case the error bars simply vanish.
+    stds, _, _ = _method_pivot(df, "time_std")
+    stds = stds.reindex(columns=methods)
+
     fig, ax = plt.subplots(figsize=(9, 5))
-    
-    # Filtriamo per escludere baorecon_gpu
-    present_backends = [b for b in BACKEND_ORDER if b in df_pivot.columns]
-    available_backends = [b for b in present_backends if b != "baorecon_gpu"]
-    
-    colors = [STYLE[b]["color"] for b in available_backends]
-    labels = [STYLE[b]["label"] for b in available_backends]
-    
-    # Plot a barre con scala logaritmica
-    df_pivot[available_backends].plot.bar(
-        ax=ax, 
-        color=colors, 
-        rot=89.999999, 
-        width=0.8, 
-        edgecolor='black', 
-        linewidth=0.5
-    )
-    
-    ax.set_xlabel("Mesh Size | Solver")
+    times.plot.bar(ax=ax, color=colors, rot=0, width=0.8,
+                   edgecolor="black", linewidth=0.5,
+                   yerr=stds, capsize=2, error_kw={"elinewidth": 0.8})
+
+    ax.set_xlabel("Mesh Size (nmesh)")
     ax.set_ylabel("Time [s] (log)")
     ax.set_yscale("log")
-    ax.set_title("Full Pipeline Performance: IFFT vs Multigrid")
-    
-    ax.grid(axis='y', which='both', alpha=0.3)
+    ax.set_title("Full Pipeline Performance Comparison")
+
+    ax.grid(axis="y", which="both", alpha=0.3)
     ax.set_axisbelow(True)
-    ax.legend(labels, title="Backend", loc='upper left')
-    
+    ax.legend(methods, title="Method", loc="upper left")
+
     _save(fig, "fig3_reconstructor_performance_comparison.pdf")
 
 # ---------------------------------------------------------------------------
@@ -288,91 +311,54 @@ def figure_speedup():
 # Figure 5: peak memory vs N
 # ---------------------------------------------------------------------------
 def figure_reconstructor_memory():
-    # 1. Trova tutti i file che iniziano con il prefisso corretto
-    files = list(RESULTS_DIR.glob("bao_reconstructor_*.csv"))
-    if not files:
-        print("[skip] fig5: no solver files found")
+    df = _load_reconstructor_methods("fig5")
+    if df is None:
         return
-        
-    # 2. Carica e concatena TUTTI i file trovati
-    dfs = []
-    for f in files:
-        df = _load(f.name)
-        if df is not None:
-            # Esempio nome file: bao_reconstructor_ifft_pyfftw.csv o bao_reconstructor_ifft.csv
-            fname_base = f.stem.replace("bao_reconstructor_", "")
-            parts = fname_base.split("_")
-            
-            # Costruiamo un'etichetta del solver che includa il backend FFT se presente
-            # parts[0] è il solver (ifft/multigrid), parts[1] potrebbe essere il backend fft
-            solver_label = parts[0].capitalize()
-            if len(parts) > 1 and parts[1] in ["pyfftw", "scipy"]:
-                solver_label += f" ({parts[1]})"
-            
-            df["solver"] = solver_label
-            df["memory_peak_gb"] = df["memory_peak_mb"] / 1024.0
-            dfs.append(df)
-            
-    if not dfs:
-        return
-    df = pd.concat(dfs, ignore_index=True)
-    
-    # 3. Pivot
-    df_pivot = df.pivot_table(
-        index=["nmesh", "solver"], 
-        columns="backend", 
-        values="memory_peak_gb", 
-        aggfunc="mean"
-    )
 
-    # --- AGGIUNTA DI SICUREZZA ---
-    # Verifica quali backend sono realmente presenti nel pivot
-    present_backends = [b for b in BACKEND_ORDER if b in df_pivot.columns]
-    
-    # Filtriamo escludendo la GPU e mantenendo solo ciò che esiste nel pivot
-    available_backends = [
-        b for b in present_backends 
-        if b != "baorecon_gpu"
-    ]
-    # -----------------------------
-    
-    # 4. Plot (usando available_backends filtrati)
+    df["memory_peak_gb"] = df["memory_peak_mb"] / 1024.0
+    # No error bars here: memory_peak_mb comes from ru_maxrss, a monotonic
+    # high-water mark over all repeats, so it has no spread to report.
+    mem, methods, colors = _method_pivot(df, "memory_peak_gb")
+
     fig, ax = plt.subplots(figsize=(9, 5))
-    
-    colors = [STYLE[b]["color"] for b in available_backends]
-    labels = [STYLE[b]["label"] for b in available_backends]
-    
-    df_pivot[available_backends].plot.bar(
-        ax=ax, 
-        color=colors, 
-        rot=89.999999, 
-        width=0.8, 
-        edgecolor='black', 
-        linewidth=0.5
-    )
-    # ... resto invariato ...
-    
-    # Plottiamo usando solo i backend filtrati
-    df_pivot[available_backends].plot.bar(
-        ax=ax, 
-        color=colors, 
-        rot=89.999999, 
-        width=0.8, 
-        edgecolor='black', 
-        linewidth=0.5
-    )
-    
-    ax.set_xlabel("Mesh Size | Solver")
+    mem.plot.bar(ax=ax, color=colors, rot=0, width=0.8,
+                 edgecolor="black", linewidth=0.5)
+
+    ax.set_xlabel("Mesh Size (nmesh)")
     ax.set_ylabel("Peak Memory [GB]")
     ax.set_yscale("log")
-    ax.set_title("Peak Memory Usage: IFFT vs Multigrid")
-    ax.grid(axis='y', which='major', alpha=0.4)
+    ax.set_title("Peak Memory Usage Comparison")
+    ax.grid(axis="y", which="both", alpha=0.3)
     ax.set_axisbelow(True)
-    ax.legend(labels, title="Backend", loc='upper left')
-    
+    ax.legend(methods, title="Method", loc="upper left")
+
     _save(fig, "fig5_reconstructor_memory_comparison.pdf")
 
 def main():
+    global RESULTS_DIR, FIGURES_DIR
+
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument("--results_dir", type=str, default=None,
+                        help="directory holding the benchmark CSVs; absolute, or "
+                             "relative to benchmarks/ (default: results)")
+    parser.add_argument("--figures_dir", type=str, default=None,
+                        help="output directory for the PDFs; absolute, or relative "
+                             "to benchmarks/ (default: figures)")
+    args = parser.parse_args()
+
+    here = Path(__file__).resolve().parent
+    if args.results_dir is not None:
+        RESULTS_DIR = Path(args.results_dir)
+        if not RESULTS_DIR.is_absolute():
+            RESULTS_DIR = here / RESULTS_DIR
+    if args.figures_dir is not None:
+        FIGURES_DIR = Path(args.figures_dir)
+        if not FIGURES_DIR.is_absolute():
+            FIGURES_DIR = here / FIGURES_DIR
+
+    print(f"reading CSVs from {RESULTS_DIR}")
+    print(f"writing figures to {FIGURES_DIR}")
+
     figure_mass_assignment()
     figure_fft_solver()
     figure_reconstructor_time()
