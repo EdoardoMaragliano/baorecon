@@ -232,6 +232,55 @@ def test_missing_section_is_rejected(tmp_path, catalogs):
 
 
 # ==========================================
+# COORDINATE SYSTEM (Euclid spelling)
+# ==========================================
+def test_coordinates_uses_the_euclid_vocabulary(tmp_path, catalogs):
+    """The parfile speaks PSEUDO_EQUATORIAL/CARTESIAN; the internal names differ."""
+    config = CatalogConfig.from_ini(_write_parfile(tmp_path, catalogs))
+    assert config.coordinate_system["input"] == "ra_dec_z"
+
+    cart = _write_parfile(
+        tmp_path, catalogs,
+        **{"coordinates = PSEUDO_EQUATORIAL": "coordinates = CARTESIAN"})
+    assert CatalogConfig.from_ini(cart).coordinate_system["input"] == "cartesian"
+
+
+def test_coordinates_value_is_case_insensitive(tmp_path, catalogs):
+    path = _write_parfile(
+        tmp_path, catalogs,
+        **{"coordinates = PSEUDO_EQUATORIAL": "coordinates = cartesian"})
+    assert CatalogConfig.from_ini(path).coordinate_system["input"] == "cartesian"
+
+
+def test_internal_names_are_not_accepted_in_the_parfile(tmp_path, catalogs):
+    """baorecon's own spelling must not leak into the Euclid-facing file."""
+    path = _write_parfile(
+        tmp_path, catalogs,
+        **{"coordinates = PSEUDO_EQUATORIAL": "coordinates = ra_dec_z"})
+    with pytest.raises(ValueError, match="PSEUDO_EQUATORIAL"):
+        CatalogConfig.from_ini(path)
+
+
+def test_unknown_coordinates_fails_at_load_time(tmp_path, catalogs):
+    """Not at conversion time, i.e. before both catalogues are read from disk."""
+    path = _write_parfile(
+        tmp_path, catalogs,
+        **{"coordinates = PSEUDO_EQUATORIAL": "coordinates = GALACTIC"})
+    with pytest.raises(ValueError, match="GALACTIC"):
+        CatalogConfig.from_ini(path)
+
+
+def test_coordinates_may_be_omitted(tmp_path, catalogs):
+    """Absent -> the key is not set, and the pipeline default (sky) applies."""
+    path = _write_parfile(
+        tmp_path, catalogs, **{"coordinates = PSEUDO_EQUATORIAL": ""})
+    config = CatalogConfig.from_ini(path)
+    assert "input" not in config.coordinate_system
+    from baorecon.io.config import resolve_coordinate_input
+    assert resolve_coordinate_input(config.coordinate_system) == "ra_dec_z"
+
+
+# ==========================================
 # TOLERANCE OF A REAL 2PCF PARFILE
 # ==========================================
 def test_unknown_2pcf_sections_and_keys_are_ignored(tmp_path, catalogs):
@@ -310,7 +359,7 @@ def test_ini_and_yaml_produce_equivalent_config(tmp_path, catalogs):
 
     # Coordinate system. `input` and `frame` are dead settings (nothing reads
     # them), so neither example carries them and only the live pair is compared.
-    for key in ("ra_dec_unit", "distance_unit"):
+    for key in ("input", "ra_dec_unit", "distance_unit"):
         assert from_ini.coordinate_system[key] == from_yaml.coordinate_system[key], key
     assert "frame" not in from_ini.coordinate_system
 

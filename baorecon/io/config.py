@@ -144,6 +144,36 @@ def _validate_flat_lcdm(section, om_matter: Optional[float]) -> None:
             )
 
 
+# 2PCF/Euclid spelling of the coordinate system, as written into the FITS
+# `COORD` header the LE3 parser reads, mapped to baorecon's internal names.
+# "Pseudo-equatorial" is this lineage's term for RA/DEC/redshift (cf. the old
+# Recon_challenge.GetData.pseudoequatorial_to_cartesian).
+_INI_COORDINATE_INPUTS = {
+    "PSEUDO_EQUATORIAL": "ra_dec_z",
+    "CARTESIAN": "cartesian",
+}
+
+
+def _coordinate_input_from_ini(section, filepath: str) -> Optional[str]:
+    """Translate the parfile's ``coordinates`` value to an internal input name.
+
+    Validated here, at load time, rather than when the conversion runs: an
+    invalid value would otherwise only surface after both catalogues have been
+    read from disk.
+    """
+    raw = _raw(section, "coordinates")
+    if raw is _MISSING or raw is None:
+        return None
+    key = raw.strip().upper()
+    if key not in _INI_COORDINATE_INPUTS:
+        raise ValueError(
+            "[Catalog.Galaxy] coordinates = {0!r} is not a known coordinate "
+            "system: expected one of {1} (in {2})".format(
+                raw, ", ".join(sorted(_INI_COORDINATE_INPUTS)), filepath)
+        )
+    return _INI_COORDINATE_INPUTS[key]
+
+
 def _cosmology_from_ini(section) -> Dict[str, Any]:
     """Translate the shared 2PCF ``[Cosmology]`` block to create_cosmology kwargs.
 
@@ -324,6 +354,11 @@ class CatalogConfig:
         # --- Coordinate system ---------------------------------------------
         # Global for the run, so it is declared once in [Catalog.Galaxy].
         coordinate_system: Dict[str, Any] = {}
+        # `coordinates` is the 2PCF/Euclid spelling (PSEUDO_EQUATORIAL / CARTESIAN);
+        # it selects what coord1/coord2/coord3 actually hold.
+        coord_input = _coordinate_input_from_ini(galaxy, filepath)
+        if coord_input is not None:
+            coordinate_system["input"] = coord_input
         _put(coordinate_system, galaxy, "angle_units", str, name="ra_dec_unit")
         _put(coordinate_system, galaxy, "distance_unit", str)
 
@@ -390,3 +425,33 @@ class CatalogConfig:
             ".yaml, .yml, .ini, .par, .parfile".format(suffix, filepath)
         )
 
+
+# =============================================================================
+# Input coordinate system
+# =============================================================================
+#
+# The pipeline accepts catalogues either as observed sky coordinates or as
+# Cartesian positions. The reconstruction engine itself is Cartesian-native
+# (``BAOReconstructor`` takes (N, 3) positions), so "cartesian" simply skips the
+# conversion on the way in and the inverse conversion on the way out; the
+# reconstructed catalogue is then written back in the same system it came in.
+
+COORDINATE_INPUTS = ("ra_dec_z", "cartesian")
+DEFAULT_COORDINATE_INPUT = "ra_dec_z"
+
+
+def resolve_coordinate_input(coordinate_system: Dict[str, Any]) -> str:
+    """Return the validated ``input`` coordinate system for a run.
+
+    Unknown values are rejected rather than defaulted: silently falling back to
+    ``ra_dec_z`` would reinterpret Cartesian columns as degrees and a redshift,
+    which produces plausible-looking numbers instead of an error.
+    """
+    value = coordinate_system.get("input") or DEFAULT_COORDINATE_INPUT
+    value = str(value).strip().lower()
+    if value not in COORDINATE_INPUTS:
+        raise ValueError(
+            "Unknown coordinate input {0!r}: expected one of {1}".format(
+                value, ", ".join(COORDINATE_INPUTS))
+        )
+    return value

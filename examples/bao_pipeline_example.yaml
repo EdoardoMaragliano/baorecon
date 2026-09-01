@@ -40,6 +40,10 @@ columns:
 ## Coordinate system and units
 ########################################
 coordinate_system:
+  # "ra_dec_z" (default): the columns above are observed sky coordinates and are
+  # converted through `cosmology` on the way in and back on the way out.
+  # "cartesian": they already are x/y/z -- no conversion either way, and
+  # ra_dec_unit / distance_unit are ignored. Output stays Cartesian.
   input: "ra_dec_z"
   ra_dec_unit: "deg"
   distance_unit: "Mpc/h"

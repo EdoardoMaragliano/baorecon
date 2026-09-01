@@ -12,7 +12,7 @@ from astropy.io import fits
 
 from baorecon.reconstruction.bao_reconstructor import BAOReconstructor
 from baorecon.io.catalog_io import Catalog
-from baorecon.io.config import CatalogConfig
+from baorecon.io.config import CatalogConfig, resolve_coordinate_input
 from baorecon.io.naming import NamingTokenizer
 from baorecon.utils.coordinates import create_cosmology, radec_z_to_xyz, xyz_to_radec_z
 from baorecon.utils.formatters import format_positions
@@ -108,11 +108,31 @@ class ReconstructionPipeline:
         ) = self.catalog.get_positions_weights_ids(target_dtype=self.dtype)
 
     def convert_to_xyz(self) -> Tuple[np.ndarray, np.ndarray]:
-        """Convert RA/DEC/redshift coordinates to Cartesian coordinates."""
+        """Put the catalogue positions into Cartesian form for the reconstructor.
+
+        With ``coordinate_system.input = "ra_dec_z"`` (the default) the observed
+        RA/DEC/redshift columns are converted through the configured cosmology.
+        With ``"cartesian"`` the columns already are x/y/z and are only stacked:
+        no cosmology, no angular units, no distance units are involved.
+        """
         if self.data_pos_ra is None or self.random_pos_ra is None:
             self.load_catalogs()
 
         coordinate_cfg = self.config.coordinate_system
+        if resolve_coordinate_input(coordinate_cfg) == "cartesian":
+            # The catalogue columns already are x/y/z: stack them and skip the
+            # conversion entirely. No cosmology is involved on this path.
+            logger.info("Input coordinates are Cartesian; skipping the sky conversion.")
+            self.data_pos_xyz = format_positions(
+                np.column_stack((self.data_pos_ra, self.data_pos_dec, self.data_pos_z)),
+                dtype=self.dtype)
+            self.random_pos_xyz = format_positions(
+                np.column_stack((self.random_pos_ra, self.random_pos_dec, self.random_pos_z)),
+                dtype=self.dtype)
+            self.data_pos_ra = self.data_pos_dec = self.data_pos_z = None
+            self.random_pos_ra = self.random_pos_dec = self.random_pos_z = None
+            return self.data_pos_xyz, self.random_pos_xyz
+
         ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
@@ -199,16 +219,36 @@ class ReconstructionPipeline:
         return self.data_rec_xyz, self.random_rec_xyz
 
     def convert_back(self) -> Tuple[np.ndarray, ...]:
-        """Convert reconstructed XYZ coordinates back to RA/DEC/redshift.
+        """Return the reconstructed positions in the run's input coordinate system.
 
-        RA and DEC are kept as separate 1D arrays (not stacked into an (N, 2)),
-        so the large random catalogue avoids an extra full-size allocation.
+        For ``ra_dec_z`` input the reconstructed XYZ is converted back to
+        RA/DEC/redshift. For ``cartesian`` input there is nothing to convert:
+        the reconstructed positions are already the output.
+
+        The three components are kept as separate 1D arrays (not stacked into an
+        (N, 2)), so the large random catalogue avoids an extra full-size copy.
         """
         if self.data_rec_xyz is None or self.random_rec_xyz is None:
             self.reconstruct()
 
-        logger.info("Converting back to RA/DEC/redshift...")
         coordinate_cfg = self.config.coordinate_system
+        if resolve_coordinate_input(coordinate_cfg) == "cartesian":
+            # Cartesian in, Cartesian out: the reconstructed positions are already
+            # the output. Converting them to the sky would invent RA/DEC/z from a
+            # box through a cosmology that never entered the run. These are views
+            # on the (N, 3) arrays, so nothing is copied; the write-out path puts
+            # them back into the configured coord1/coord2/coord3 columns.
+            logger.info("Input coordinates were Cartesian; no back-conversion needed.")
+            (self.data_rec_ra, self.data_rec_dec, self.data_rec_z) = (
+                self.data_rec_xyz[:, 0], self.data_rec_xyz[:, 1], self.data_rec_xyz[:, 2])
+            (self.random_rec_ra, self.random_rec_dec, self.random_rec_z) = (
+                self.random_rec_xyz[:, 0], self.random_rec_xyz[:, 1], self.random_rec_xyz[:, 2])
+            return (
+                self.data_rec_ra, self.data_rec_dec, self.data_rec_z,
+                self.random_rec_ra, self.random_rec_dec, self.random_rec_z,
+            )
+
+        logger.info("Converting back to RA/DEC/redshift...")
         ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
