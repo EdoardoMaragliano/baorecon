@@ -4,7 +4,6 @@ from typing import Optional, Tuple, Sequence, Union
 from scipy.interpolate import interp1d
 
 from astropy import units as u
-from astropy.coordinates import SkyCoord
 from astropy.cosmology import Planck18, FlatLambdaCDM
 
 from baorecon.utils.loggers import setup_logger
@@ -86,7 +85,6 @@ def radec_z_to_xyz(
     redshift: Sequence,
     cosmo: Optional[FlatLambdaCDM] = None,
     ra_dec_unit: str = "deg",
-    frame: str = "icrs",
     distance_unit: str = "Mpc/h",
 ) -> Tuple[np.ndarray, np.ndarray]:
     """
@@ -154,7 +152,6 @@ def xyz_to_radec_z(
     xyz: Sequence,
     cosmo: Optional[FlatLambdaCDM] = None,
     ra_dec_unit: str = "deg",
-    frame: str = "icrs",
     distance_unit: str = "Mpc/h",
     z_atol: float = 1e-8,  
     z_max: float = 5.0,

@@ -113,7 +113,6 @@ class ReconstructionPipeline:
 
         coordinate_cfg = self.config.coordinate_system
         ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
-        frame = coordinate_cfg.get("frame", "icrs")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
         data_xyz, _ = radec_z_to_xyz(
@@ -122,7 +121,6 @@ class ReconstructionPipeline:
             self.data_pos_z,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
-            frame=frame,
             distance_unit=distance_unit,
         )
         random_xyz, _ = radec_z_to_xyz(
@@ -131,7 +129,6 @@ class ReconstructionPipeline:
             self.random_pos_z,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
-            frame=frame,
             distance_unit=distance_unit,
         )
         # Positions are already loaded at the working precision (self.dtype) and
@@ -212,14 +209,12 @@ class ReconstructionPipeline:
         logger.info("Converting back to RA/DEC/redshift...")
         coordinate_cfg = self.config.coordinate_system
         ra_dec_unit = coordinate_cfg.get("ra_dec_unit", "deg")
-        frame = coordinate_cfg.get("frame", "icrs")
         distance_unit = coordinate_cfg.get("distance_unit", "Mpc/h")
 
         self.data_rec_ra, self.data_rec_dec, self.data_rec_z, _ = xyz_to_radec_z(
             self.data_rec_xyz,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
-            frame=frame,
             distance_unit=distance_unit,
         )
 
@@ -227,7 +222,6 @@ class ReconstructionPipeline:
             self.random_rec_xyz,
             cosmo=self.cosmology,
             ra_dec_unit=ra_dec_unit,
-            frame=frame,
             distance_unit=distance_unit,
         )
 
