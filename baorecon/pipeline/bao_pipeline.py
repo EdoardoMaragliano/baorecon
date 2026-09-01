@@ -58,7 +58,8 @@ class ReconstructionPipeline:
 
     def __init__(self, config_file: str) -> None:
         self.config_file = config_file
-        self.config = CatalogConfig.from_yaml(config_file)
+        # YAML or 2PCF/Euclid-style INI, chosen by extension.
+        self.config = CatalogConfig.from_file(config_file)
         self.catalog = Catalog(self.config)
         self.cosmology = create_cosmology(**self.config.cosmology)
 
