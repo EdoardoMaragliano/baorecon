@@ -73,6 +73,12 @@ reconstruction:
   # Mutually exclusive with a non-zero `padding` above: periodic BCs describe a
   # cubic simulation box, not the padded survey geometry configured here.
   pbc: false
+  # Rotate the catalogue so the survey's mean line of sight lies along z before
+  # solving, and rotate the reconstructed positions back afterwards. Leaves the
+  # cone centred on the axis, so its bounding box -- and therefore the mesh it
+  # needs -- is much smaller. A local line of sight (los: null) is unaffected,
+  # being equivariant under rotation.
+  align_cone: false
   rectype: "rec-sym"
   f: 0.88
   bias: 1.7

@@ -8,6 +8,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `reconstruction.align_cone` (YAML and INI, default `false`) wires `ConeFrame`
+  into both pipelines. The rotation lives in the coordinate layer, paired with
+  `convert_to_xyz`/`convert_back` -- already the symmetric pair that puts a
+  catalogue into the frame the solver works in and takes it back out -- so
+  `BAOReconstructor` is untouched and its `boxsize` and `los` keep meaning what
+  they meant, in the one frame it ever sees. The box is measured after the
+  rotation, so it is the tighter one. The frame is built from the *randoms*, by
+  whichever route the input path allows: from the angles for `ra_dec_z` (while
+  they are still alive, before `convert_to_xyz` releases them) and from the
+  positions for `cartesian`, which has no angles at all. `convert_back` also
+  un-rotates the *pre*-reconstruction arrays while they live, since
+  `_save_catalogs` forms the tracer displacements as `pos_xyz - rec_xyz` and
+  that subtraction would otherwise straddle two frames. The matrix is written
+  into the metadata sidecar, without which the saved grids -- which stay in the
+  cone frame -- cannot be put back on the sky. Alignment is logged at INFO with
+  the footprint centre in RA/DEC, and at DEBUG before and after: after the
+  rotation the centre is at `DEC = +90` (the z axis is the pole; RA is degenerate
+  there, and the centre does *not* land on RA/DEC = 0,0), reported with the
+  residual misalignment.
 - `baorecon.utils.frames.ConeFrame`: the rotation that aligns a survey cone's
   mean line of sight with the `z` axis, so an off-axis lightcone (up to ~150
   degrees from `z`) is left with only its own angular radius. The payoff is a

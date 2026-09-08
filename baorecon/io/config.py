@@ -370,6 +370,7 @@ class CatalogConfig:
         _put(reconstruction, recon_sec, "padding", float)
         _put(reconstruction, recon_sec, "R_sm", float)
         _put(reconstruction, recon_sec, "pbc", _to_bool)
+        _put(reconstruction, recon_sec, "align_cone", _to_bool)
         _put(reconstruction, recon_sec, "rectype", str)
         _put(reconstruction, recon_sec, "f", float)
         _put(reconstruction, recon_sec, "bias", float)

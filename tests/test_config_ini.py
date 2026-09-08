@@ -139,6 +139,16 @@ def test_booleans_are_coerced_both_ways(tmp_path, catalogs):
         CatalogConfig.from_ini(bad)
 
 
+def test_align_cone_is_read_from_the_parfile(tmp_path, catalogs):
+    """The whitelist in from_ini must carry align_cone through, as a real bool."""
+    assert CatalogConfig.from_ini(
+        _write_parfile(tmp_path, catalogs)).reconstruction["align_cone"] is False
+
+    flipped = _write_parfile(
+        tmp_path, catalogs, **{"align_cone = false": "align_cone = true"})
+    assert CatalogConfig.from_ini(flipped).reconstruction["align_cone"] is True
+
+
 def test_empty_means_null_absent_means_default(tmp_path, catalogs):
     """`key =` is null; a missing key is left out so the pipeline default wins."""
     config = CatalogConfig.from_ini(_write_parfile(tmp_path, catalogs))

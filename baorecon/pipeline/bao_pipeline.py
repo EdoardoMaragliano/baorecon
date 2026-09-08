@@ -10,7 +10,9 @@ import pickle
 import numpy as np
 from astropy.io import fits
 
+from baorecon.pipeline._cone import build_frame, rotate_all, unrotate_all
 from baorecon.reconstruction.bao_reconstructor import BAOReconstructor
+from baorecon.utils.frames import ConeFrame
 from baorecon.io.catalog_io import Catalog
 from baorecon.io.config import CatalogConfig, resolve_coordinate_input
 from baorecon.io.naming import NamingTokenizer
@@ -68,6 +70,12 @@ class ReconstructionPipeline:
         # reconstructor: the coordinate helpers now preserve their input dtype,
         # so the pipeline must own the cast rather than relying on them.
         self.dtype = np.dtype(self.config.reconstruction.get("dtype", "float32")).type
+
+        # Optional cone alignment: rotate the catalogue so the survey's mean line
+        # of sight lies along z, which tightens the bounding box. Off by default,
+        # so existing runs are unchanged; the frame is built in convert_to_xyz.
+        self.align_cone = bool(self.config.reconstruction.get("align_cone", False))
+        self.cone_frame: Optional[ConeFrame] = None
 
         self.data_pos_ra: Optional[np.ndarray] = None
         self.data_pos_dec: Optional[np.ndarray] = None
@@ -129,6 +137,10 @@ class ReconstructionPipeline:
             self.random_pos_xyz = format_positions(
                 np.column_stack((self.random_pos_ra, self.random_pos_dec, self.random_pos_z)),
                 dtype=self.dtype)
+            if self.align_cone:
+                # No angles on this path -- the axis comes from the random positions.
+                self.cone_frame = build_frame(self.dtype, positions=self.random_pos_xyz)
+                rotate_all(self.cone_frame, self.data_pos_xyz, self.random_pos_xyz)
             self.data_pos_ra = self.data_pos_dec = self.data_pos_z = None
             self.random_pos_ra = self.random_pos_dec = self.random_pos_z = None
             return self.data_pos_xyz, self.random_pos_xyz
@@ -154,6 +166,12 @@ class ReconstructionPipeline:
         )
         # Positions are already loaded at the working precision (self.dtype) and
         # coordinates.py preserves it, so format_positions just validates shape.
+        # Build the cone frame while the angles are still alive: they are dropped
+        # just below, and from_angles is the cheaper route anyway.
+        if self.align_cone:
+            self.cone_frame = build_frame(
+                self.dtype, ra=self.random_pos_ra, dec=self.random_pos_dec)
+
         # Drop the raw RA/DEC/z now -- only needed to build the xyz arrays (the
         # random catalogue is the large one).
         self.data_pos_ra = self.data_pos_dec = self.data_pos_z = None
@@ -161,6 +179,8 @@ class ReconstructionPipeline:
 
         self.data_pos_xyz = format_positions(data_xyz, dtype=self.dtype)
         self.random_pos_xyz = format_positions(random_xyz, dtype=self.dtype)
+        if self.cone_frame is not None:
+            rotate_all(self.cone_frame, self.data_pos_xyz, self.random_pos_xyz)
         return self.data_pos_xyz, self.random_pos_xyz
 
 
@@ -230,6 +250,14 @@ class ReconstructionPipeline:
         """
         if self.data_rec_xyz is None or self.random_rec_xyz is None:
             self.reconstruct()
+
+        if self.cone_frame is not None:
+            # Back to the survey frame before anything reads these as sky
+            # positions. The pre-reconstruction arrays go too while they are
+            # still alive: _save_catalogs forms the tracer displacements as
+            # ``pos_xyz - rec_xyz``, which would otherwise straddle two frames.
+            unrotate_all(self.cone_frame, self.data_rec_xyz, self.random_rec_xyz,
+                         self.data_pos_xyz, self.random_pos_xyz)
 
         coordinate_cfg = self.config.coordinate_system
         if resolve_coordinate_input(coordinate_cfg) == "cartesian":
@@ -454,7 +482,12 @@ class ReconstructionPipeline:
         saved_paths: Dict[str, str] = {}
         if self.config.output.get("save_metadata", True):
             metadata_path = output_folder / (base_name + "_metadata.txt")
-            metadata_path.write_text(str(asdict(self.config)), encoding="utf-8")
+            payload = asdict(self.config)
+            if self.cone_frame is not None:
+                # The saved grids live in the cone frame whatever happens, so
+                # without the matrix beside them they cannot be put back on the sky.
+                payload["cone_frame"] = self.cone_frame.to_dict()
+            metadata_path.write_text(str(payload), encoding="utf-8")
             saved_paths["metadata"] = str(metadata_path)
         return saved_paths
 
