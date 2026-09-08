@@ -8,6 +8,34 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- `baorecon.utils.frames.ConeFrame`: the rotation that aligns a survey cone's
+  mean line of sight with the `z` axis, so an off-axis lightcone (up to ~150
+  degrees from `z`) is left with only its own angular radius. The payoff is a
+  compact bounding box -- the same mesh resolves the cone with fewer cells --
+  while a local line of sight is unaffected, being equivariant under rotation.
+  Built from sky coordinates (`from_angles`), from Cartesian positions
+  (`from_positions`, the only route for catalogues that are already Cartesian),
+  or from an explicit axis (`from_direction`, e.g. to share one geometry across
+  redshift bins). Being a pure rotation about the origin it applies unchanged to
+  positions and to displacement fields; `rotate(a, out=a)` works in place, which
+  avoids a second multi-hundred-megabyte buffer on a large random catalogue.
+  `to_dict`/`from_dict` carry the matrix into the run metadata, without which
+  saved grids -- which live in the cone frame -- cannot be put back on the sky.
+  `angular_radius` reports the cone's half-opening angle, the scale at which a
+  fixed-axis line of sight stops being a good approximation.
+  The frame carries a working `dtype` like the rest of the package (default
+  `float32`; `from_positions` follows the catalogue) and never casts the
+  catalogue: `rotate` refuses a mismatched array rather than allocating a
+  full-size copy or silently changing the pipeline's precision, and `astype`
+  moves the frame's nine numbers instead. Strided arrays are read in place, so
+  passing a view does not materialise it.
+  Storage precision and accumulation precision are kept distinct: the direction
+  sum and the matrix construction are always float64 (three scalars and nine
+  numbers, so no memory cost) before being cast down. Summing float32 unit
+  vectors along axis 0 of an `(N, 3)` array skips numpy's pairwise summation and
+  put the axis 23 degrees off in testing, silently.
+  The matrix matches ZAtools' `Rotate_cone` elementwise, so replacing that
+  implementation is a no-op. Not yet wired into `ReconstructionPipeline`.
 - `CatalogConfig.from_ini` reads a 2PCF/Euclid-style INI parameter file, and
   `CatalogConfig.from_file` dispatches on the extension (`.ini`/`.par`/`.parfile`
   go to the INI loader, anything else to the YAML one), so
