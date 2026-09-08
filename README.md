@@ -133,16 +133,24 @@ The pipeline covers:
 2. reading a config file (YAML, or a 2PCF/Euclid-style INI parameter file)
 3. selecting coordinate, weight, and ID columns (with optional column pruning on read)
 4. converting RA/DEC/redshift to Cartesian coordinates (skipped when the catalog columns already are Cartesian)
-5. running `BAOReconstructor`
-6. preserving IDs through optional masking steps
-7. converting reconstructed coordinates back to RA/DEC/redshift
-8. saving the results (FITS or Parquet) to a tokenized output folder
+5. optionally aligning the survey cone with the `z` axis (`reconstruction.align_cone`)
+6. running `BAOReconstructor`
+7. preserving IDs through optional masking steps
+8. rotating back out of the cone frame, then converting to RA/DEC/redshift
+9. saving the results (FITS or Parquet) to a tokenized output folder
 
 The input format is inferred from the file extension (`.fits`/`.fit`,
 `.parquet`/`.pq`) or set explicitly with `catalog.format`; the output format is
 controlled by `output.format` (default `fits`). The *config* format is likewise
 inferred from its extension: `.ini`/`.par`/`.parfile` are read as 2PCF/Euclid
 parameter files, anything else as YAML.
+
+Cone alignment (step 5) rotates the catalogue so the survey's mean line of sight
+lies along `z`, leaving the cone centred on the axis instead of wherever the survey
+happens to point, and so shrinking the bounding box the mesh has to cover. It is off
+by default; a local line of sight is unaffected, being equivariant under rotation.
+The rotation matrix is written to the metadata sidecar, which the saved grids need
+since they stay in the rotated frame.
 
 See [baorecon/pipeline/README.md](baorecon/pipeline/README.md) for the full workflow, with [examples/bao_pipeline_example.yaml](examples/bao_pipeline_example.yaml) and the equivalent [examples/bao_pipeline_parfile.ini](examples/bao_pipeline_parfile.ini) as annotated templates.
 
@@ -308,7 +316,7 @@ for thread control, FFTW planning/wisdom, and measured memory savings.
 - `baorecon/mesh/README.md`: mesh geometry; `mesh/los.py` holds the line-of-sight strategies
 - `baorecon/io/`: catalog I/O with pluggable FITS/Parquet backends (`io/backends/`), YAML/INI config parsing, and output naming
 - `baorecon/pipeline/README.md`: config-driven catalog pipeline and output flow
-- `baorecon/utils/README.md`: formatting, logging, backend selection, and utility helpers
+- `baorecon/utils/README.md`: formatting, logging, backend selection, reference frames, and utility helpers
 - [docs/pyfftw_backend.md](docs/pyfftw_backend.md): optional in-place, low-memory CPU FFT backend (`BAORECON_FFT=pyfftw`)
 - `benchmarks/README.md`: profiling scripts comparing baorecon (CPU/GPU) against pyrecon
 

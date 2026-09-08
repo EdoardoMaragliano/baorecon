@@ -21,6 +21,10 @@ This package groups small helper modules shared across the reconstruction pipeli
   FFT backend on `BAORECON_FFT=pyfftw` (see [../../docs/pyfftw_backend.md](../../docs/pyfftw_backend.md)).
 - `coordinates.py`: cosmology construction (`create_cosmology`) and RA/DEC/redshift ↔
   Cartesian conversions built on Astropy.
+- `frames.py`: the cone-aligned reference frame (`ConeFrame`) — the rotation taking a
+  survey's mean line of sight onto the `z` axis, and back. A pure rotation about the
+  origin, so it applies unchanged to positions and to displacement fields; carries a
+  working dtype and never casts the catalogue.
 - `loggers.py`: logger configuration shared across modules (`setup_logger`).
 - `utils.py`: general-purpose numerical helpers (rho/delta conversion, smoothing-radius
   conversions, periodic distances, box splitting).

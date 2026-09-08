@@ -108,6 +108,11 @@ Utilities package
    :undoc-members:
    :show-inheritance:
 
+.. automodule:: baorecon.utils.frames
+   :members:
+   :undoc-members:
+   :show-inheritance:
+
 .. automodule:: baorecon.utils.loggers
    :members:
    :undoc-members:

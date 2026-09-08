@@ -12,10 +12,27 @@ It handles:
 2. reading a configuration file (YAML, or a 2PCF/Euclid-style INI parameter file)
 3. selecting the coordinate, weight, and ID columns (with optional column pruning on read)
 4. converting RA/DEC/redshift to Cartesian coordinates using Astropy cosmology helpers (skipped when `coordinate_system.input` is `cartesian`)
-5. running `BAOReconstructor`
-6. preserving IDs through optional masking/filtering steps
-7. converting reconstructed coordinates back to RA/DEC/redshift
-8. saving a flexible set of outputs (catalogs, fields, etc.) with tokenized filenames
+5. optionally rotating the survey cone onto the `z` axis (`reconstruction.align_cone`, off by default)
+6. running `BAOReconstructor`
+7. preserving IDs through optional masking/filtering steps
+8. rotating back out of the cone frame, then converting to RA/DEC/redshift
+9. saving a flexible set of outputs (catalogs, fields, etc.) with tokenized filenames
+
+### Cone alignment
+
+With `reconstruction.align_cone`, `convert_to_xyz` builds a
+[`ConeFrame`](../utils/frames.py) from the **randoms** and rotates both catalogues
+so the survey's mean line of sight lies along `z`; `convert_back` undoes it before
+the sky conversion. Keeping it in this pair — rather than inside `BAOReconstructor`
+— leaves the reconstructor's `boxsize` and `los` unambiguous, and the box is then
+measured on the rotated catalogue, which is the tighter one.
+
+Two consequences worth knowing. The saved **grids stay in the cone frame**, since
+they are defined on the solver's mesh, so the rotation matrix is written into the
+metadata sidecar; without it they cannot be put back on the sky. And `convert_back`
+also un-rotates the pre-reconstruction positions while they are still alive,
+because the tracer displacements are formed as `pos_xyz - rec_xyz` and that
+subtraction must not straddle two frames.
 
 ### Output Control
 
