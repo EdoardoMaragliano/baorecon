@@ -122,9 +122,10 @@ If the catalogues are in `RA / DEC / REDSHIFT` coordinates there are two routes.
 
 ### 1. Use the pipeline (recommended for survey workflows)
 
-`baorecon.pipeline.ReconstructionPipeline` is YAML-driven and handles I/O, the
-`RA/DEC/z → xyz` conversion, reconstruction, and the `xyz → RA/DEC/z`
-back-conversion for you. See [../pipeline/README.md](../pipeline/README.md).
+`baorecon.pipeline.ReconstructionPipeline` is config-driven (YAML or a
+2PCF/Euclid-style INI parfile) and handles I/O, the `RA/DEC/z → xyz` conversion,
+reconstruction, and the `xyz → RA/DEC/z` back-conversion for you. Catalogues
+already in Cartesian coordinates skip both conversions. See [../pipeline/README.md](../pipeline/README.md).
 
 ### 2. Convert manually with `utils/coordinates`
 

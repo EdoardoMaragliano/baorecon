@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `CatalogConfig.from_ini` reads a 2PCF/Euclid-style INI parameter file, and
+  `CatalogConfig.from_file` dispatches on the extension (`.ini`/`.par`/`.parfile`
+  go to the INI loader, anything else to the YAML one), so
+  `ReconstructionPipeline` takes either format with no call-site change. The
+  `[Cosmology]` block keeps the 2PCF spelling verbatim so one block can serve
+  both codes, and the loader translates. `examples/bao_pipeline_parfile.ini` is
+  the annotated template; `tests/test_config_ini.py` asserts it stays equivalent
+  to the YAML example.
+- The pipeline accepts catalogues whose columns already are Cartesian x/y/z, via
+  `coordinate_system.input = "cartesian"` (`CARTESIAN` in the parfile). The sky
+  conversion is skipped in both directions, so no cosmology enters that path and
+  the reconstructed positions are the output as-is.
+
+### Removed
+- The dead `frame` parameter (`frame="icrs"`) is gone from `radec_z_to_xyz`,
+  `xyz_to_radec_z` and the pipeline call sites, together with the unused
+  `SkyCoord` import. These transforms have always been direct
+  spherical <-> Cartesian numpy operations with no frame handling; the parameter
+  promised behaviour that did not exist.
+
 ## [0.7.0] - 2026-07-27
 
 ### Added

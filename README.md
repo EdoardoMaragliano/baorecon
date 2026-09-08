@@ -17,7 +17,7 @@ In contrast to many existing implementations, `baorecon` is designed to be **lig
 * 🐍 **100% Pure Python:** Written entirely in Python with no C++ wrapper layer or complex compilation steps required.
 * ⚡ **JIT & GPU Accelerated:** Heavy mesh operations are extremely fast thanks to `njit`-compiled CPU kernels and `numba.cuda` GPU kernels.
 * 🪶 **Lightweight Dependencies:** Relies on common, standard scientific Python packages (NumPy, SciPy, pandas) rather than specialized or heavy external frameworks.
-* 🧩 **Highly Modular API:** Provides a one-line high-level API entry point, a survey-ready YAML-driven pipeline, and a modular structure that allows you to use individual components (e.g., solvers, density managers) independently.
+* 🧩 **Highly Modular API:** Provides a one-line high-level API entry point, a survey-ready config-driven pipeline (YAML or Euclid/2PCF INI), and a modular structure that allows you to use individual components (e.g., solvers, density managers) independently.
 * 🧮 **Multiple Solvers:** Includes both FFT-based solvers and a Multigrid backend. *(Note: The multigrid backend currently includes standard Jacobi smoothing as well as a semi-experimental V-cycle solver based on multi-color Gauss-Seidel).*
 
 ## ⚙️ How it works
@@ -125,14 +125,14 @@ displacement_mg = mg_solver.displacement
 
 ## Pipeline
 
-For survey-style workflows with FITS or Parquet catalogs, use the YAML-driven pipeline in `baorecon/pipeline`.
+For survey-style workflows with FITS or Parquet catalogs, use the config-driven pipeline in `baorecon/pipeline`.
 
 The pipeline covers:
 
 1. loading data and random catalogs (FITS or Parquet)
-2. reading a YAML config file
+2. reading a config file (YAML, or a 2PCF/Euclid-style INI parameter file)
 3. selecting coordinate, weight, and ID columns (with optional column pruning on read)
-4. converting RA/DEC/redshift to Cartesian coordinates
+4. converting RA/DEC/redshift to Cartesian coordinates (skipped when the catalog columns already are Cartesian)
 5. running `BAOReconstructor`
 6. preserving IDs through optional masking steps
 7. converting reconstructed coordinates back to RA/DEC/redshift
@@ -140,9 +140,11 @@ The pipeline covers:
 
 The input format is inferred from the file extension (`.fits`/`.fit`,
 `.parquet`/`.pq`) or set explicitly with `catalog.format`; the output format is
-controlled by `output.format` (default `fits`).
+controlled by `output.format` (default `fits`). The *config* format is likewise
+inferred from its extension: `.ini`/`.par`/`.parfile` are read as 2PCF/Euclid
+parameter files, anything else as YAML.
 
-See [baorecon/pipeline/README.md](baorecon/pipeline/README.md) and [examples/bao_pipeline_example.yaml](examples/bao_pipeline_example.yaml) for the full workflow.
+See [baorecon/pipeline/README.md](baorecon/pipeline/README.md) for the full workflow, with [examples/bao_pipeline_example.yaml](examples/bao_pipeline_example.yaml) and the equivalent [examples/bao_pipeline_parfile.ini](examples/bao_pipeline_parfile.ini) as annotated templates.
 
 ## Working precision
 
@@ -249,7 +251,7 @@ pip install -e ".[test,notebook,docs]"   # editable dev install, combined extras
 The density assignment, FFT-based displacement/potential solver, and field
 interpolation can run on a CUDA GPU via [CuPy](https://cupy.dev/). This is
 enabled by setting `device: "gpu"` in the `reconstruction` section of the
-pipeline YAML config (see
+pipeline config (see
 [baorecon/pipeline/README.md](baorecon/pipeline/README.md)). The
 `multigrid` solver always runs on CPU regardless of this setting.
 
@@ -304,8 +306,8 @@ for thread control, FFTW planning/wisdom, and measured memory savings.
 - `baorecon/mas/`: mass assignment (`assign`) and read-out (`readout`), CPU/GPU kernels
 - `baorecon/field_ops/`: mesh field operations (divergence, smoothing, interpolation), CPU/GPU split
 - `baorecon/mesh/README.md`: mesh geometry; `mesh/los.py` holds the line-of-sight strategies
-- `baorecon/io/`: catalog I/O with pluggable FITS/Parquet backends (`io/backends/`), YAML config parsing, and output naming
-- `baorecon/pipeline/README.md`: YAML-driven catalog pipeline and output flow
+- `baorecon/io/`: catalog I/O with pluggable FITS/Parquet backends (`io/backends/`), YAML/INI config parsing, and output naming
+- `baorecon/pipeline/README.md`: config-driven catalog pipeline and output flow
 - `baorecon/utils/README.md`: formatting, logging, backend selection, and utility helpers
 - [docs/pyfftw_backend.md](docs/pyfftw_backend.md): optional in-place, low-memory CPU FFT backend (`BAORECON_FFT=pyfftw`)
 - `benchmarks/README.md`: profiling scripts comparing baorecon (CPU/GPU) against pyrecon

@@ -1,4 +1,4 @@
-"""End-to-end BAO reconstruction pipeline driven by YAML configuration."""
+"""End-to-end BAO reconstruction pipeline driven by a YAML or INI configuration."""
 
 from __future__ import annotations
 

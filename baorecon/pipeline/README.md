@@ -1,6 +1,6 @@
 # Pipeline
 
-This package provides the YAML-driven, end-to-end catalog pipeline that wraps the core BAO reconstruction code.
+This package provides the config-driven, end-to-end catalog pipeline that wraps the core BAO reconstruction code.
 
 ## What it does
 
@@ -9,9 +9,9 @@ The pipeline is designed for survey-style workflows where inputs are FITS or Par
 It handles:
 
 1. loading data and random catalogs from FITS or Parquet paths
-2. reading a YAML configuration file
+2. reading a configuration file (YAML, or a 2PCF/Euclid-style INI parameter file)
 3. selecting the coordinate, weight, and ID columns (with optional column pruning on read)
-4. converting RA/DEC/redshift to Cartesian coordinates using Astropy cosmology helpers
+4. converting RA/DEC/redshift to Cartesian coordinates using Astropy cosmology helpers (skipped when `coordinate_system.input` is `cartesian`)
 5. running `BAOReconstructor`
 6. preserving IDs through optional masking/filtering steps
 7. converting reconstructed coordinates back to RA/DEC/redshift
@@ -19,7 +19,7 @@ It handles:
 
 ### Output Control
 
-The `output` section of the YAML configuration file allows fine-grained control over what gets saved. By default, only the reconstructed catalogs are written to disk. You can specify other artifacts using the `save` key:
+The `output` section of the configuration file allows fine-grained control over what gets saved. By default, only the reconstructed catalogs are written to disk. You can specify other artifacts using the `save` key:
 
 ```yaml
 output:
@@ -105,7 +105,7 @@ Use the example configuration in [examples/bao_pipeline_example.yaml](../../exam
 
 Typical execution flow:
 
-1. load the YAML config
+1. load the config (YAML or INI)
 2. instantiate `ReconstructionPipeline`
 3. call `run()`
 4. collect the specified outputs in the configured folder
