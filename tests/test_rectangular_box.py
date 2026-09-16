@@ -177,3 +177,131 @@ def test_redshift_space_displacement_on_real_mesh(boxsize):
                        RSDspace="RedshiftSpace").displacement
     assert psi.shape == (N, N, N, 3)
     assert np.isfinite(psi).all()
+
+
+# ==================================================
+# 4. PER-AXIS NMESH (NOT just per-axis boxsize)
+# ==================================================
+# The tests above vary `boxsize` while keeping `nmesh` cubic, which is the one
+# rectangular case that cannot catch a read-out assuming a single mesh size: with
+# a cubic `nmesh`, `field.shape[0]` happens to be right for all three axes. A
+# per-axis `nmesh` — what `cellsize` produces — is the case that bites.
+
+def _sine_potential(nmesh, boxsize):
+    """phi = sin(2pi x/Lx) sin(2pi y/Ly) sin(2pi z/Lz) sampled on the grid nodes."""
+    nmesh = np.asarray(nmesh, dtype=np.int64)
+    boxsize = np.asarray(boxsize, dtype=np.float64)
+    k = 2.0 * np.pi / boxsize
+    axes = [np.arange(n) * (L / n) for n, L in zip(nmesh, boxsize)]
+    xx, yy, zz = np.meshgrid(*axes, indexing="ij")
+    return np.sin(k[0] * xx) * np.sin(k[1] * yy) * np.sin(k[2] * zz), (xx, yy, zz), k
+
+
+def _analytic_minus_grad(pos, boxsize):
+    """-grad phi at arbitrary positions, for the same phi."""
+    boxsize = np.asarray(boxsize, dtype=np.float64)
+    k = 2.0 * np.pi / boxsize
+    x, y, z = pos[:, 0], pos[:, 1], pos[:, 2]
+    return -np.stack([
+        k[0] * np.cos(k[0] * x) * np.sin(k[1] * y) * np.sin(k[2] * z),
+        k[1] * np.sin(k[0] * x) * np.cos(k[1] * y) * np.sin(k[2] * z),
+        k[2] * np.sin(k[0] * x) * np.sin(k[1] * y) * np.cos(k[2] * z),
+    ], axis=1)
+
+
+def _cosine_similarity(a, b):
+    return float(np.sum(a * b) / np.sqrt(np.sum(a * a) * np.sum(b * b)))
+
+
+# Cubic first as the control, then grids whose axes genuinely differ. The last
+# two are the shapes a survey run produces through `cellsize`.
+PER_AXIS_GRIDS = [
+    ((32, 32, 32), (64.0, 64.0, 64.0)),
+    ((32, 64, 128), (64.0, 128.0, 256.0)),
+    ((56, 80, 80), (448.0, 640.0, 640.0)),
+    ((80, 80, 24), (640.0, 640.0, 192.0)),
+]
+
+
+@pytest.mark.parametrize("nmesh, boxsize", PER_AXIS_GRIDS)
+def test_vector_interpolation_honours_per_axis_nmesh(nmesh, boxsize):
+    """Interpolating an exact vector field must reproduce it, on any grid shape.
+
+    Feeds the analytic field itself onto the nodes, so nothing but the
+    interpolation is under test. A read-out that takes one mesh size from axis 0
+    mis-sizes the cells on the other two and indexes the wrong nodes; on
+    ``(80, 80, 24)`` it also clamps the third index to 79 on an axis of length
+    24, reading out of bounds.
+    """
+    nmesh = np.asarray(nmesh, dtype=np.int64)
+    boxsize = np.asarray(boxsize, dtype=np.float64)
+    _, (xx, yy, zz), k = _sine_potential(nmesh, boxsize)
+
+    field = -np.stack([
+        k[0] * np.cos(k[0] * xx) * np.sin(k[1] * yy) * np.sin(k[2] * zz),
+        k[1] * np.sin(k[0] * xx) * np.cos(k[1] * yy) * np.sin(k[2] * zz),
+        k[2] * np.sin(k[0] * xx) * np.sin(k[1] * yy) * np.cos(k[2] * zz),
+    ], axis=-1).astype(np.float64)
+
+    rng = np.random.RandomState(11)
+    pos = rng.uniform(0, 1, size=(5000, 3)) * boxsize
+    expected = _analytic_minus_grad(pos, boxsize)
+
+    got = interpolate_vector_field(pos, field, boxsize, MAS="CIC", pbc=True, dtype=np.float64)
+
+    assert np.all(np.isfinite(got))
+    assert _cosine_similarity(got, expected) > 0.99, (
+        f"interpolated field decorrelates from the exact one on nmesh={tuple(nmesh)}: "
+        "the read-out is assuming a single mesh size for all three axes"
+    )
+    # Trilinear interpolation of a sine is slightly low; a few percent is expected,
+    # a wrong cell size is not.
+    ratio = np.median(np.linalg.norm(got, axis=1)) / np.median(np.linalg.norm(expected, axis=1))
+    assert 0.9 < ratio < 1.1, f"amplitude off by {ratio:.3f} on nmesh={tuple(nmesh)}"
+
+
+@pytest.mark.parametrize("nmesh, boxsize", PER_AXIS_GRIDS)
+def test_fft_and_multigrid_readout_agree_on_per_axis_nmesh(nmesh, boxsize):
+    """The two solvers must read the same displacement at the same tracers.
+
+    ``test_solver_equivalence`` compares the displacement *grids* on cubic
+    meshes; this compares what the pipeline actually consumes — the per-tracer
+    read-out — on grids whose axes differ. The two paths are independent
+    implementations (the FFT solver interpolates its displacement grid, the
+    multigrid differentiates the potential on the fly), so agreement here is a
+    real check rather than a tautology.
+    """
+    from baorecon.solvers.fft import FFTSolverCPU
+    from baorecon.solvers.multigrid import MultigridSolver
+    from baorecon.mesh.los import FixedAxisLOS
+
+    nmesh = np.asarray(nmesh, dtype=np.int64)
+    boxsize = np.asarray(boxsize, dtype=np.float64)
+
+    # A resolved overdensity: a bump several cells across, mean-subtracted.
+    axes = [np.arange(n) * (L / n) for n, L in zip(nmesh, boxsize)]
+    xx, yy, zz = np.meshgrid(*axes, indexing="ij")
+    centre = boxsize / 2.0
+    sigma = boxsize.min() / 12.0
+    delta = np.exp(-(((xx - centre[0]) ** 2 + (yy - centre[1]) ** 2 + (zz - centre[2]) ** 2)
+                     / (2.0 * sigma ** 2))).astype(np.float32)
+    delta -= delta.mean()
+
+    mesh = _mesh(boxsize, nmesh, boxcentre=centre)
+    los = FixedAxisLOS(2)
+    fft = FFTSolverCPU(delta, mesh, los=los, f=0.0, bias=1.0, RSDspace="RealSpace")
+    mg = MultigridSolver(delta, mesh, los=los, f=0.0, bias=1.0, RSDspace="RealSpace",
+                         use_plane_parallel=True)
+
+    rng = np.random.RandomState(3)
+    pos = (rng.uniform(0.2, 0.8, size=(4000, 3)) * boxsize).astype(np.float32)
+
+    d_fft = fft.read_displacement_at(pos, mas="CIC")
+    d_mg = mg.read_displacement_at(pos, mas="CIC")
+
+    assert np.all(np.isfinite(d_fft)) and np.all(np.isfinite(d_mg))
+    assert np.abs(d_fft).max() > 1e-6, "FFT read-out is ~zero; the comparison would be vacuous"
+    assert np.abs(d_mg).max() > 1e-6, "multigrid read-out is ~zero; the comparison would be vacuous"
+    assert _cosine_similarity(d_fft, d_mg) > 0.99, (
+        f"FFT and multigrid read-outs disagree at the tracers on nmesh={tuple(nmesh)}"
+    )

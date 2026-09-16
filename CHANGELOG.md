@@ -7,6 +7,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `interpolate_cic_vector` and `interpolate_tsc_vector` (CPU) read a single mesh
+  size off axis 0 (`nmesh = field.shape[0]`) and used it for all three axes. The
+  per-axis `boxsize` was honoured, the per-axis `nmesh` was not, so on any grid
+  whose axes differ the cell size was wrong on two of them and the node indices
+  were wrong with it — and where axis 0 is the longest, the non-periodic clamp
+  ran past the end of a shorter axis, reading out of bounds (njit, no bounds
+  checking). Both now take `nx`, `ny`, `nz` from `field.shape`.
+
+  These are the read-out for the FFT solvers (`FFTSolverCPU.read_displacement_at`),
+  so **every FFT reconstruction on a non-cubic mesh returned wrong displacements
+  at the tracers**. Measured on a Flagship z1 run at `nmesh = (224, 320, 320)`:
+  the median |Psi| went from 2.385 to 4.362 Mpc/h, and the FFT and multigrid
+  read-outs went from a correlation of 0.04 to 1.00. Runs with a scalar `nmesh`
+  are unaffected — the mesh is cubic then, and `field.shape[0]` is right for
+  every axis — which is why this survived: a non-cubic `nmesh` only arises from
+  `cellsize` or an explicit length-3 `nmesh`. The GPU kernels already derived the
+  three sizes separately and were never affected.
+
+  The existing rectangular-box tests varied `boxsize` while keeping `nmesh`
+  cubic, the one rectangular case that cannot catch this. `tests/test_rectangular_box.py`
+  now covers per-axis `nmesh`: interpolation of an exact analytic field on four
+  grid shapes, and agreement between the FFT and multigrid *read-outs* at tracer
+  positions (independent implementations — the FFT interpolates its displacement
+  grid, the multigrid differentiates the potential).
+- `tests/test_solver_equivalence.py` compared two zero fields. Its
+  `_gaussian_bump` used `sigma = 0.05` on a unit-spaced grid, centred between
+  nodes: sampled on the grid it peaked at 7e-66, both solvers returned a zero
+  displacement, and `np.allclose(0, 0)` passed without comparing anything. The
+  bump is now three cells wide and centred on a node, and a `_assert_not_vacuous`
+  guard fails if either displacement collapses to zero again.
+
 ### Added
 - `reconstruction.align_cone` (YAML and INI, default `false`) wires `ConeFrame`
   into both pipelines. The rotation lives in the coordinate layer, paired with

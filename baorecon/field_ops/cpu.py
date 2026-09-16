@@ -61,14 +61,20 @@ def divergence_finite_diff(vector_field: np.ndarray, cell_size: float) -> np.nda
 def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     """Trilinear CIC interpolation of a vector field at particle positions.
 
-    ``boxsize`` is a length-3 array giving the per-axis box size.
+    ``boxsize`` is a length-3 array giving the per-axis box size, and the grid
+    size is read per axis from ``field.shape``: cubic and rectangular meshes
+    share one code path. Taking a single mesh size from axis 0 would mis-size the
+    cells on the other two and index the wrong nodes -- and where axis 0 is the
+    longest, clamp past the end of a shorter axis.
     """
     N = pos.shape[0]
-    nmesh = field.shape[0]
+    nx = field.shape[0]
+    ny = field.shape[1]
+    nz = field.shape[2]
     out = np.zeros((N, 3), dtype=dtype)
-    csx = boxsize[0] / nmesh
-    csy = boxsize[1] / nmesh
-    csz = boxsize[2] / nmesh
+    csx = boxsize[0] / nx
+    csy = boxsize[1] / ny
+    csz = boxsize[2] / nz
 
     for idx in prange(N):
         fx = pos[idx, 0] / csx
@@ -84,19 +90,19 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
         tz = fz - k0
 
         if pbc:
-            i0 = i0 % nmesh
-            j0 = j0 % nmesh
-            k0 = k0 % nmesh
-            i1 = (i0 + 1) % nmesh
-            j1 = (j0 + 1) % nmesh
-            k1 = (k0 + 1) % nmesh
+            i0 = i0 % nx
+            j0 = j0 % ny
+            k0 = k0 % nz
+            i1 = (i0 + 1) % nx
+            j1 = (j0 + 1) % ny
+            k1 = (k0 + 1) % nz
         else:
-            i0 = min(i0, nmesh - 1)
-            j0 = min(j0, nmesh - 1)
-            k0 = min(k0, nmesh - 1)
-            i1 = min(i0 + 1, nmesh - 1)
-            j1 = min(j0 + 1, nmesh - 1)
-            k1 = min(k0 + 1, nmesh - 1)
+            i0 = min(i0, nx - 1)
+            j0 = min(j0, ny - 1)
+            k0 = min(k0, nz - 1)
+            i1 = min(i0 + 1, nx - 1)
+            j1 = min(j0 + 1, ny - 1)
+            k1 = min(k0 + 1, nz - 1)
 
         for c in range(3):
             c000 = field[i0, j0, k0, c]
@@ -135,13 +141,18 @@ def tsc_weight(dx):
 
 @njit(parallel=True, fastmath=True)
 def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
-    """TSC interpolation of a vector field at particle positions."""
+    """TSC interpolation of a vector field at particle positions.
+
+    Per-axis grid size, as in :func:`interpolate_cic_vector`.
+    """
     N = pos.shape[0]
-    nmesh = field.shape[0]
+    nx = field.shape[0]
+    ny = field.shape[1]
+    nz = field.shape[2]
     out = np.zeros((N, 3), dtype=dtype)
-    csx = boxsize[0] / nmesh
-    csy = boxsize[1] / nmesh
-    csz = boxsize[2] / nmesh
+    csx = boxsize[0] / nx
+    csy = boxsize[1] / ny
+    csz = boxsize[2] / nz
 
     for idx in prange(N):
         fx = pos[idx, 0] / csx
@@ -158,9 +169,9 @@ def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
                 continue
             i_idx = i0 + di
             if pbc:
-                i_idx = i_idx % nmesh
+                i_idx = i_idx % nx
             else:
-                i_idx = min(max(i_idx, 0), nmesh - 1)
+                i_idx = min(max(i_idx, 0), nx - 1)
 
             for dj in range(-1, 2):
                 wy = tsc_weight(fy - (j0 + dj))
@@ -168,9 +179,9 @@ def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
                     continue
                 j_idx = j0 + dj
                 if pbc:
-                    j_idx = j_idx % nmesh
+                    j_idx = j_idx % ny
                 else:
-                    j_idx = min(max(j_idx, 0), nmesh - 1)
+                    j_idx = min(max(j_idx, 0), ny - 1)
 
                 for dk in range(-1, 2):
                     wz = tsc_weight(fz - (k0 + dk))
@@ -178,9 +189,9 @@ def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
                         continue
                     k_idx = k0 + dk
                     if pbc:
-                        k_idx = k_idx % nmesh
+                        k_idx = k_idx % nz
                     else:
-                        k_idx = min(max(k_idx, 0), nmesh - 1)
+                        k_idx = min(max(k_idx, 0), nz - 1)
 
                     w_tot = wx * wy * wz
                     for c in range(3):
