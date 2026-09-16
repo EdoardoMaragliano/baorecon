@@ -23,6 +23,31 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   on the box faces, where the non-periodic clamp actually applies.
 
 ### Fixed
+- `n_iterations` was accepted everywhere and ingested nowhere. `BAOReconstructor`
+  declared `**kwargs` and never stored them, so the keyword — passed by
+  `reconstruct_positions`, by `ReconstructionPipeline.build_reconstructor`, and
+  documented as a parfile key in `examples/bao_pipeline_parfile.ini` — reached the
+  constructor and stopped there. The iterative FFT solver reads `solver_args`, so
+  it ran at its internal default of 3 whatever the caller or the parfile asked
+  for. `n_iterations` is now an explicit `BAOReconstructor` argument merged into
+  `solver_args` (an explicit `solver_args` entry still wins), and all three routes
+  take effect. Results are unchanged for anyone who left it at the conventional 3.
+
+  `BAOReconstructor` now **rejects** keywords it does not recognise instead of
+  dropping them, which is what let this hide. The error names them and, where it
+  can tell, says where they belong: solver options in `solver_args`, `align_cone`
+  in `ReconstructionPipeline`. Callers passing extra keywords that never did
+  anything will start seeing a `TypeError` — which is the point, since silently
+  ignoring `align_cone=True` let a caller believe the catalogue had been aligned.
+
+### Changed
+- `reconstruct_positions` names `solver_type` (default `"multigrid"`, unchanged —
+  note the example parfiles configure `"ifft"`, so a call here and a pipeline run
+  do not pick the same solver unless one of them says so). `n_iterations` moves to
+  `**kwargs`, where it now works; the signature had promoted a solver-specific
+  option above the choice of solver itself.
+
+### Fixed
 - `interpolate_cic_vector` and `interpolate_tsc_vector` (CPU) read a single mesh
   size off axis 0 (`nmesh = field.shape[0]`) and used it for all three axes. The
   per-axis `boxsize` was honoured, the per-axis `nmesh` was not, so on any grid

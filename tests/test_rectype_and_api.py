@@ -96,13 +96,7 @@ def test_unknown_rectype_is_rejected():
 # ---------------------------------------------------------------------------
 
 def test_reconstruct_positions_matches_the_explicit_reconstructor():
-    """The one-liner must be a shortcut, not a second implementation.
-
-    ``solver_type`` is passed explicitly on both sides: the API does not forward
-    one, so it inherits ``BAOReconstructor``'s default (``multigrid``) while the
-    pipeline example configures ``ifft``. Leaving it out here would compare two
-    different solvers and fail for a reason that has nothing to do with the API.
-    """
+    """The one-liner must be a shortcut, not a second implementation."""
     data, random = _catalogs()
     common = dict(nmesh=NMESH, boxsize=BOXSIZE, boxcentre=[BOXSIZE / 2] * 3,
                   padding=0.0, R_sm=10.0, rectype="rec-sym", solver_type="ifft",
@@ -149,3 +143,103 @@ def test_reconstruct_positions_returns_both_catalogues_moved():
     assert d.shape == data.shape and r.shape == random.shape
     assert np.abs(d - data).max() > 1e-3
     assert np.abs(r - random).max() > 1e-3
+
+
+def test_api_exposes_solver_type_by_name():
+    """``solver_type`` is a named parameter, and it selects the solver."""
+    import inspect
+    params = inspect.signature(reconstruct_positions).parameters
+    assert "solver_type" in params
+    assert params["solver_type"].default == "multigrid", (
+        "the default is BAOReconstructor's; changing it changes every existing call")
+
+    data, random = _catalogs()
+    common = dict(nmesh=NMESH, boxsize=BOXSIZE, boxcentre=[BOXSIZE / 2] * 3,
+                  padding=0.0, smoothing=10.0, los=None, pbc=False,
+                  dtype=np.float64, f=0.8, bias=1.5)
+    ifft, _ = reconstruct_positions(data, random, solver_type="ifft", **common)
+    mg, _ = reconstruct_positions(data, random, solver_type="multigrid", **common)
+    assert not np.allclose(ifft, mg, atol=1e-8), "solver_type is not reaching the solver"
+
+
+def test_n_iterations_reaches_the_solver_by_both_routes():
+    """Exposed means ingested: the keyword must actually change the solve.
+
+    It used to reach ``BAOReconstructor`` as a loose keyword and stop there --
+    ``**kwargs`` was declared and never stored -- so the iterative FFT solver ran
+    at its internal default whatever the caller or the parfile asked for. The
+    value itself is fixed by the literature and nobody is expected to tune it;
+    what matters is that it is not silently dropped.
+    """
+    data, random = _catalogs()
+    common = dict(nmesh=NMESH, boxsize=BOXSIZE, boxcentre=[BOXSIZE / 2] * 3,
+                  padding=0.0, smoothing=10.0, los=None, pbc=False,
+                  dtype=np.float64, f=0.8, bias=1.5, solver_type="ifft",
+                  RSDspace="RedshiftSpace")
+
+    one, _ = reconstruct_positions(data, random, n_iterations=1, **common)
+    nine, _ = reconstruct_positions(data, random, n_iterations=9, **common)
+    assert not np.allclose(one, nine, atol=1e-8), "n_iterations is being dropped"
+
+    # solver_args is the more specific route and wins over the keyword.
+    via_args, _ = reconstruct_positions(
+        data, random, n_iterations=1, solver_args={"n_iterations": 9}, **common)
+    np.testing.assert_allclose(via_args, nine, rtol=0, atol=0)
+
+
+def test_n_iterations_default_is_the_conventional_three():
+    data, random = _catalogs()
+    common = dict(nmesh=NMESH, boxsize=BOXSIZE, boxcentre=[BOXSIZE / 2] * 3,
+                  padding=0.0, smoothing=10.0, los=None, pbc=False,
+                  dtype=np.float64, f=0.8, bias=1.5, solver_type="ifft",
+                  RSDspace="RedshiftSpace")
+    implicit, _ = reconstruct_positions(data, random, **common)
+    explicit, _ = reconstruct_positions(data, random, n_iterations=3, **common)
+    np.testing.assert_allclose(implicit, explicit, rtol=0, atol=0)
+
+
+def test_unknown_keywords_are_rejected():
+    """A keyword nothing reads must fail loudly, not vanish.
+
+    ``**kwargs`` was declared and never stored, so anything unrecognised was
+    accepted and dropped -- how ``n_iterations`` came to be exposed in three
+    places and ingested in none. The error names the offenders and, where it can
+    tell, points at where they were probably meant to go.
+    """
+    data, random = _catalogs()
+    common = dict(nmesh=NMESH, boxsize=BOXSIZE, boxcentre=[BOXSIZE / 2] * 3,
+                  padding=0.0, smoothing=10.0, los=None, pbc=False,
+                  dtype=np.float64, f=0.8, bias=1.5, solver_type="ifft")
+
+    with pytest.raises(TypeError, match="unexpected keyword argument"):
+        reconstruct_positions(data, random, nmsh=32, **common)
+
+
+def test_align_cone_is_rejected_with_a_pointer_to_the_pipeline():
+    """Cone alignment lives in the pipeline, and asking for it here is an error.
+
+    Silently ignoring it would be worse than refusing: a caller would believe the
+    catalogue had been aligned.
+    """
+    data, random = _catalogs()
+    common = dict(nmesh=NMESH, boxsize=BOXSIZE, boxcentre=[BOXSIZE / 2] * 3,
+                  padding=0.0, smoothing=10.0, los=None, pbc=False,
+                  dtype=np.float64, f=0.8, bias=1.5, solver_type="ifft")
+
+    with pytest.raises(TypeError, match="ReconstructionPipeline"):
+        reconstruct_positions(data, random, align_cone=True, **common)
+
+
+def test_solver_options_are_pointed_at_solver_args():
+    data, random = _catalogs()
+    common = dict(nmesh=NMESH, boxsize=BOXSIZE, boxcentre=[BOXSIZE / 2] * 3,
+                  padding=0.0, smoothing=10.0, los=None, pbc=False,
+                  dtype=np.float64, f=0.8, bias=1.5, solver_type="multigrid")
+
+    with pytest.raises(TypeError, match=r"solver_args"):
+        reconstruct_positions(data, random, smoother="mcgs", **common)
+
+    # ...and through solver_args it is accepted.
+    shifted, _ = reconstruct_positions(
+        data, random, solver_args={"smoother": "mcgs"}, **common)
+    assert np.all(np.isfinite(shifted))

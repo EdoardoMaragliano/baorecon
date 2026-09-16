@@ -16,7 +16,7 @@ def reconstruct_positions(
     smoothing: float = 15,
     los: Optional[str] = None,
     device: str = "cpu",
-    n_iterations: int = 3,
+    solver_type: str = "multigrid",
     cellsize: Optional[float] = None,
     **kwargs,
 ) -> Tuple[np.ndarray, np.ndarray]:
@@ -38,18 +38,33 @@ def reconstruct_positions(
         Line of sight. ``None`` uses the local (radial) line of sight.
     device : {'cpu', 'gpu'}, optional
         Compute backend. Default 'cpu'.
-    n_iterations : int, optional
-        Iterations for the redshift-space iterative solver. Default 3.
+    solver_type : {'multigrid', 'ifft'}, optional
+        Which Poisson solver to use. Default 'multigrid' -- note that the example
+        parfiles configure 'ifft', so a call here and a pipeline run do not pick
+        the same solver unless one of them says so explicitly.
     cellsize : float, optional
         Target (isotropic) cell size. Mutually exclusive with ``nmesh``; when
         given, the per-axis grid is derived from the catalogue extent and
         ``nmesh`` is ignored.
     **kwargs
-        Forwarded to :class:`~baorecon.reconstruction.bao_reconstructor.BAOReconstructor`.
-        Note that ``solver_type`` is among them and is *not* defaulted here, so
-        omitting it selects that class's default (``"multigrid"``) — while the
-        pipeline example parfiles configure ``"ifft"``. Pass it explicitly when
-        comparing a call here against a pipeline run.
+        Forwarded to :class:`~baorecon.reconstruction.bao_reconstructor.BAOReconstructor`
+        as constructor arguments -- ``bias`` aside, that is where ``rectype``,
+        ``RSDspace``, ``boxsize``, ``pbc`` and the rest go.
+
+        ``n_iterations`` (iterations of the redshift-space iterative FFT solver,
+        3 by convention) is among them and reaches the solver. Other solver
+        options travel in the ``solver_args`` dict, which also overrides
+        ``n_iterations`` if it sets it::
+
+            reconstruct_positions(..., solver_type="ifft",
+                                  solver_args={"smoother": "mcgs"})
+
+        A keyword that is not one of the reconstructor's parameters raises
+        ``TypeError`` rather than being silently dropped, and the message points
+        at where it probably belongs. ``align_cone`` is the one worth naming: it
+        belongs to :class:`~baorecon.pipeline.bao_pipeline.ReconstructionPipeline`
+        and has no meaning here, since this function reconstructs the positions it
+        is given, in the frame it is given them in.
 
     Returns
     -------
@@ -66,7 +81,7 @@ def reconstruct_positions(
         R_sm=smoothing,
         los=los,
         device=device,
-        n_iterations=n_iterations,
+        solver_type=solver_type,
         **kwargs,
     )
     return reconstructor.run_reconstruction()

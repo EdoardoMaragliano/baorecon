@@ -57,11 +57,30 @@ class BAOReconstructor:
         threshold_randoms: float = 0.01,
         solver_type: str = "multigrid",
         solver_args: Optional[dict] = None,
+        n_iterations: int = 3,
         device: str = "cpu",
         cellsize: Optional[float] = None,
         mas_parallel: bool = False,
         **kwargs,
     ) -> None:
+        # Nothing below reads **kwargs, so anything landing there would be
+        # accepted and silently dropped. Rejecting instead, with a
+        # pointer to where the caller probably meant it to go.
+        if kwargs:
+            unexpected = ", ".join(repr(k) for k in sorted(kwargs))
+            hints = []
+            if {"smoother", "v_cycles", "n_smooth", "damping"} & set(kwargs):
+                hints.append("solver options belong in solver_args={...}")
+            if "align_cone" in kwargs:
+                hints.append(
+                    "align_cone belongs to ReconstructionPipeline: this class "
+                    "reconstructs the positions it is given, in the frame it is "
+                    "given them in")
+            message = f"unexpected keyword argument(s): {unexpected}"
+            if hints:
+                message += " -- " + "; ".join(hints)
+            raise TypeError(message)
+
         self._padding = padding
         self._dtype = dtype
 
@@ -126,7 +145,14 @@ class BAOReconstructor:
         self._bias = bias
         self._threshold_randoms = threshold_randoms
         self._solver_type = solver_type
-        self._solver_args = solver_args or {}
+        # One bag for solver options, so a caller can reach them either through the
+        # dedicated `n_iterations` argument or through `solver_args`. Without this
+        # the keyword was accepted (every keyword is -- see the note on **kwargs
+        # below) and dropped, leaving the iterative FFT solver pinned at its
+        # internal default no matter what the caller or the parfile asked for.
+        # An explicit `solver_args` entry wins, being the more specific of the two.
+        self._solver_args = dict(solver_args or {})
+        self._solver_args.setdefault("n_iterations", int(n_iterations))
         self._device = device
 
         # --- Resolve device-dependent strategy ONCE ---
