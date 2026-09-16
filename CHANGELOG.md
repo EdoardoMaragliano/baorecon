@@ -7,6 +7,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- Test coverage for three things that had none. `rec-iso` was never constructed
+  anywhere in the suite although it takes its own branch in `_shift_randoms`;
+  it is now covered by what *distinguishes* it from `rec-sym` — in redshift space
+  the two must give identical data and differing randoms, in real space identical
+  randoms — so a dead branch would fail rather than pass. `reconstruct_positions`,
+  the one-line API the README leads with, is checked against an explicitly built
+  `BAOReconstructor`. And the two pipeline implementations are pinned to each
+  other stage by stage and on their written products; they had drifted to 86% vs
+  39% coverage, which matters because every wiring change has to be made twice.
+- `assign` and `readout` coverage across NGP/CIC/TSC, periodic and non-periodic,
+  serial and chunked. The suite had leaned on CIC with `pbc=True` while survey
+  runs are `pbc=False`; mass conservation is now asserted for particles sitting
+  on the box faces, where the non-periodic clamp actually applies.
+
 ### Fixed
 - `interpolate_cic_vector` and `interpolate_tsc_vector` (CPU) read a single mesh
   size off axis 0 (`nmesh = field.shape[0]`) and used it for all three axes. The

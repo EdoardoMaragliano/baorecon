@@ -46,6 +46,10 @@ def reconstruct_positions(
         ``nmesh`` is ignored.
     **kwargs
         Forwarded to :class:`~baorecon.reconstruction.bao_reconstructor.BAOReconstructor`.
+        Note that ``solver_type`` is among them and is *not* defaulted here, so
+        omitting it selects that class's default (``"multigrid"``) — while the
+        pipeline example parfiles configure ``"ifft"``. Pass it explicitly when
+        comparing a call here against a pipeline run.
 
     Returns
     -------
