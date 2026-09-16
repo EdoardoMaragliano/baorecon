@@ -22,64 +22,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   runs are `pbc=False`; mass conservation is now asserted for particles sitting
   on the box faces, where the non-periodic clamp actually applies.
 
-### Fixed
-- `n_iterations` was accepted everywhere and ingested nowhere. `BAOReconstructor`
-  declared `**kwargs` and never stored them, so the keyword — passed by
-  `reconstruct_positions`, by `ReconstructionPipeline.build_reconstructor`, and
-  documented as a parfile key in `examples/bao_pipeline_parfile.ini` — reached the
-  constructor and stopped there. The iterative FFT solver reads `solver_args`, so
-  it ran at its internal default of 3 whatever the caller or the parfile asked
-  for. `n_iterations` is now an explicit `BAOReconstructor` argument merged into
-  `solver_args` (an explicit `solver_args` entry still wins), and all three routes
-  take effect. Results are unchanged for anyone who left it at the conventional 3.
-
-  `BAOReconstructor` now **rejects** keywords it does not recognise instead of
-  dropping them, which is what let this hide. The error names them and, where it
-  can tell, says where they belong: solver options in `solver_args`, `align_cone`
-  in `ReconstructionPipeline`. Callers passing extra keywords that never did
-  anything will start seeing a `TypeError` — which is the point, since silently
-  ignoring `align_cone=True` let a caller believe the catalogue had been aligned.
-
-### Changed
-- `reconstruct_positions` names `solver_type` (default `"multigrid"`, unchanged —
-  note the example parfiles configure `"ifft"`, so a call here and a pipeline run
-  do not pick the same solver unless one of them says so). `n_iterations` moves to
-  `**kwargs`, where it now works; the signature had promoted a solver-specific
-  option above the choice of solver itself.
-
-### Fixed
-- `interpolate_cic_vector` and `interpolate_tsc_vector` (CPU) read a single mesh
-  size off axis 0 (`nmesh = field.shape[0]`) and used it for all three axes. The
-  per-axis `boxsize` was honoured, the per-axis `nmesh` was not, so on any grid
-  whose axes differ the cell size was wrong on two of them and the node indices
-  were wrong with it — and where axis 0 is the longest, the non-periodic clamp
-  ran past the end of a shorter axis, reading out of bounds (njit, no bounds
-  checking). Both now take `nx`, `ny`, `nz` from `field.shape`.
-
-  These are the read-out for the FFT solvers (`FFTSolverCPU.read_displacement_at`),
-  so **every FFT reconstruction on a non-cubic mesh returned wrong displacements
-  at the tracers**. Measured on a Flagship z1 run at `nmesh = (224, 320, 320)`:
-  the median |Psi| went from 2.385 to 4.362 Mpc/h, and the FFT and multigrid
-  read-outs went from a correlation of 0.04 to 1.00. Runs with a scalar `nmesh`
-  are unaffected — the mesh is cubic then, and `field.shape[0]` is right for
-  every axis — which is why this survived: a non-cubic `nmesh` only arises from
-  `cellsize` or an explicit length-3 `nmesh`. The GPU kernels already derived the
-  three sizes separately and were never affected.
-
-  The existing rectangular-box tests varied `boxsize` while keeping `nmesh`
-  cubic, the one rectangular case that cannot catch this. `tests/test_rectangular_box.py`
-  now covers per-axis `nmesh`: interpolation of an exact analytic field on four
-  grid shapes, and agreement between the FFT and multigrid *read-outs* at tracer
-  positions (independent implementations — the FFT interpolates its displacement
-  grid, the multigrid differentiates the potential).
-- `tests/test_solver_equivalence.py` compared two zero fields. Its
-  `_gaussian_bump` used `sigma = 0.05` on a unit-spaced grid, centred between
-  nodes: sampled on the grid it peaked at 7e-66, both solvers returned a zero
-  displacement, and `np.allclose(0, 0)` passed without comparing anything. The
-  bump is now three cells wide and centred on a node, and a `_assert_not_vacuous`
-  guard fails if either displacement collapses to zero again.
-
-### Added
 - `reconstruction.align_cone` (YAML and INI, default `false`) wires `ConeFrame`
   into both pipelines. The rotation lives in the coordinate layer, paired with
   `convert_to_xyz`/`convert_back` -- already the symmetric pair that puts a
@@ -139,6 +81,62 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `coordinate_system.input = "cartesian"` (`CARTESIAN` in the parfile). The sky
   conversion is skipped in both directions, so no cosmology enters that path and
   the reconstructed positions are the output as-is.
+
+### Changed
+- `reconstruct_positions` names `solver_type` (default `"multigrid"`, unchanged —
+  note the example parfiles configure `"ifft"`, so a call here and a pipeline run
+  do not pick the same solver unless one of them says so). `n_iterations` moves to
+  `**kwargs`, where it now works; the signature had promoted a solver-specific
+  option above the choice of solver itself.
+
+### Fixed
+- `n_iterations` was accepted everywhere and ingested nowhere. `BAOReconstructor`
+  declared `**kwargs` and never stored them, so the keyword — passed by
+  `reconstruct_positions`, by `ReconstructionPipeline.build_reconstructor`, and
+  documented as a parfile key in `examples/bao_pipeline_parfile.ini` — reached the
+  constructor and stopped there. The iterative FFT solver reads `solver_args`, so
+  it ran at its internal default of 3 whatever the caller or the parfile asked
+  for. `n_iterations` is now an explicit `BAOReconstructor` argument merged into
+  `solver_args` (an explicit `solver_args` entry still wins), and all three routes
+  take effect. Results are unchanged for anyone who left it at the conventional 3.
+
+  `BAOReconstructor` now **rejects** keywords it does not recognise instead of
+  dropping them, which is what let this hide. The error names them and, where it
+  can tell, says where they belong: solver options in `solver_args`, `align_cone`
+  in `ReconstructionPipeline`. Callers passing extra keywords that never did
+  anything will start seeing a `TypeError` — which is the point, since silently
+  ignoring `align_cone=True` let a caller believe the catalogue had been aligned.
+
+- `interpolate_cic_vector` and `interpolate_tsc_vector` (CPU) read a single mesh
+  size off axis 0 (`nmesh = field.shape[0]`) and used it for all three axes. The
+  per-axis `boxsize` was honoured, the per-axis `nmesh` was not, so on any grid
+  whose axes differ the cell size was wrong on two of them and the node indices
+  were wrong with it — and where axis 0 is the longest, the non-periodic clamp
+  ran past the end of a shorter axis, reading out of bounds (njit, no bounds
+  checking). Both now take `nx`, `ny`, `nz` from `field.shape`.
+
+  These are the read-out for the FFT solvers (`FFTSolverCPU.read_displacement_at`),
+  so **every FFT reconstruction on a non-cubic mesh returned wrong displacements
+  at the tracers**. Measured on a Flagship z1 run at `nmesh = (224, 320, 320)`:
+  the median |Psi| went from 2.385 to 4.362 Mpc/h, and the FFT and multigrid
+  read-outs went from a correlation of 0.04 to 1.00. Runs with a scalar `nmesh`
+  are unaffected — the mesh is cubic then, and `field.shape[0]` is right for
+  every axis — which is why this survived: a non-cubic `nmesh` only arises from
+  `cellsize` or an explicit length-3 `nmesh`. The GPU kernels already derived the
+  three sizes separately and were never affected.
+
+  The existing rectangular-box tests varied `boxsize` while keeping `nmesh`
+  cubic, the one rectangular case that cannot catch this. `tests/test_rectangular_box.py`
+  now covers per-axis `nmesh`: interpolation of an exact analytic field on four
+  grid shapes, and agreement between the FFT and multigrid *read-outs* at tracer
+  positions (independent implementations — the FFT interpolates its displacement
+  grid, the multigrid differentiates the potential).
+- `tests/test_solver_equivalence.py` compared two zero fields. Its
+  `_gaussian_bump` used `sigma = 0.05` on a unit-spaced grid, centred between
+  nodes: sampled on the grid it peaked at 7e-66, both solvers returned a zero
+  displacement, and `np.allclose(0, 0)` passed without comparing anything. The
+  bump is now three cells wide and centred on a node, and a `_assert_not_vacuous`
+  guard fails if either displacement collapses to zero again.
 
 ### Removed
 - The dead `frame` parameter (`frame="icrs"`) is gone from `radec_z_to_xyz`,
