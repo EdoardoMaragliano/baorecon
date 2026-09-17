@@ -5,30 +5,36 @@ from astropy.table import Table
 
 from baorecon.io.backends import resolve_format
 from baorecon.io.catalog_io import Catalog
+from baorecon.io.config import ColumnMapping
 
 
 # Mock minimale della configurazione delle colonne.
-class DummyColumns:
-    def __init__(self, keep_cols=None):
-        self.ra = "RA"
-        self.dec = "DEC"
-        self.redshift = "Z"
-        self.weight_data = "WEIGHT"
-        self.weight_random = "WEIGHT"
-        self.id_data = "ID"
-        self.id_random = "ID"
-        self.keep_cols = keep_cols if keep_cols is not None else []
+def DummyColumns(keep_cols=None, **overrides):
+    """The real ColumnMapping, not a stand-in.
+
+    This used to be a hand-written stub with the same attributes, which drifted
+    the moment ColumnMapping grew a method -- the tests then exercised a shape
+    the code no longer had.
+    """
+    return ColumnMapping(
+        ra="RA", dec="DEC", redshift="Z",
+        weight_data="WEIGHT", weight_random="WEIGHT",
+        id_data="ID", id_random="ID",
+        keep_cols=list(keep_cols) if keep_cols is not None else [],
+        **overrides,
+    )
 
 
 # Mock minimale di CatalogConfig per evitare di caricare un vero file YAML.
 class DummyConfig:
-    def __init__(self, data_path, random_path, keep_cols=None, catalog_format=None):
+    def __init__(self, data_path, random_path, keep_cols=None, catalog_format=None,
+                 columns=None):
         self.data_path = str(data_path)
         self.random_path = str(random_path)
         self.data_hdu = 1
         self.random_hdu = 1
         self.catalog_format = catalog_format
-        self.columns = DummyColumns(keep_cols)
+        self.columns = columns if columns is not None else DummyColumns(keep_cols)
 
 
 def _make_data(size, seed):
@@ -236,3 +242,58 @@ def test_resolve_format_unknown_format_raises():
 def test_resolve_format_unknown_extension_raises():
     with pytest.raises(ValueError, match="Cannot infer catalog format"):
         resolve_format("catalog.csv")
+
+
+# ==========================================
+# PER-CATALOGUE COORDINATE COLUMNS
+# ==========================================
+def test_randoms_are_read_through_their_own_coordinate_columns(tmp_path):
+    """The two catalogues may spell their coordinates differently."""
+    data = _make_data(40, seed=1)
+    randoms = _make_data(90, seed=2)
+    # Same randoms, observed spelling.
+    randoms = {"RIGHT_ASCENSION": randoms["RA"], "DECLINATION": randoms["DEC"],
+               "SPE_Z": randoms["Z"], "WEIGHT": randoms["WEIGHT"], "ID": randoms["ID"]}
+
+    data_path = tmp_path / "data.fits"
+    random_path = tmp_path / "random.fits"
+    Table(data).write(data_path, overwrite=True)
+    Table(randoms).write(random_path, overwrite=True)
+
+    columns = DummyColumns(ra_random="RIGHT_ASCENSION", dec_random="DECLINATION",
+                           redshift_random="SPE_Z")
+    catalog = Catalog(DummyConfig(data_path, random_path, columns=columns))
+    catalog.load()
+
+    (_, _, _, _, _, random_ra, random_dec, random_z, _, _) = \
+        catalog.get_positions_weights_ids()
+    np.testing.assert_allclose(random_ra, randoms["RIGHT_ASCENSION"], rtol=1e-6)
+    np.testing.assert_allclose(random_z, randoms["SPE_Z"], rtol=1e-6)
+
+
+def test_output_table_keeps_the_spelling_of_its_own_catalogue(tmp_path):
+    """A random written back keeps RIGHT_ASCENSION, not the data's RA."""
+    data = _make_data(40, seed=1)
+    randoms = _make_data(90, seed=2)
+    randoms = {"RIGHT_ASCENSION": randoms["RA"], "DECLINATION": randoms["DEC"],
+               "SPE_Z": randoms["Z"], "WEIGHT": randoms["WEIGHT"], "ID": randoms["ID"]}
+
+    data_path = tmp_path / "data.fits"
+    random_path = tmp_path / "random.fits"
+    Table(data).write(data_path, overwrite=True)
+    Table(randoms).write(random_path, overwrite=True)
+
+    columns = DummyColumns(ra_random="RIGHT_ASCENSION", dec_random="DECLINATION",
+                           redshift_random="SPE_Z")
+    catalog = Catalog(DummyConfig(data_path, random_path, columns=columns))
+    catalog.load()
+
+    n = len(catalog.random)
+    shifted_ra = np.zeros(n)
+    shifted_dec = np.ones(n)
+    table = catalog.build_output_table(
+        False, (shifted_ra, shifted_dec), reconstructed_redshift=None)
+
+    assert "RIGHT_ASCENSION" in table.columns
+    assert "RA" not in table.columns
+    np.testing.assert_allclose(table["RIGHT_ASCENSION"].to_numpy(), shifted_ra)

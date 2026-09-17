@@ -209,16 +209,68 @@ def test_inconsistent_om_vac_warns_but_loads(tmp_path, catalogs, caplog):
     assert "om_vac" in caplog.text
 
 
-def test_mismatched_coordinate_columns_are_rejected(tmp_path, catalogs):
-    """The columns are per-catalogue in the parfile but global in the config."""
+def test_randoms_may_name_their_coordinates_differently(tmp_path, catalogs):
+    """Observed data against randoms written to another convention.
+
+    The columns are per-catalogue in the parfile and per-catalogue in the
+    config, so the two need not agree.
+    """
     text = PARFILE.read_text().replace("/path/to/data_catalog.fits", catalogs[0])
     text = text.replace("/path/to/random_catalog.fits", catalogs[1])
     # Only the [Catalog.Random] occurrence, i.e. the last one.
     head, _, tail = text.rpartition("coord1 = RA")
     path = tmp_path / "mismatch.ini"
-    path.write_text(head + "coord1 = RA_RANDOM" + tail)
-    with pytest.raises(ValueError, match="coord1"):
+    path.write_text(head + "coord1 = RIGHT_ASCENSION" + tail)
+
+    config = CatalogConfig.from_ini(str(path))
+    assert config.columns.coordinates(is_data=True) == ("RA", "DEC", "REDSHIFT")
+    assert config.columns.coordinates(is_data=False) == (
+        "RIGHT_ASCENSION", "DEC", "REDSHIFT")
+
+
+def test_random_coordinates_default_to_the_data_ones(tmp_path, catalogs):
+    """Dropping them from [Catalog.Random] inherits, which is the common case."""
+    text = Path(_write_parfile(tmp_path, catalogs)).read_text()
+    head, _, tail = text.rpartition("coord1 = RA")
+    path = tmp_path / "inherit.ini"
+    path.write_text(head + tail)
+
+    config = CatalogConfig.from_ini(str(path))
+    assert config.columns.coordinates(is_data=False) == ("RA", "DEC", "REDSHIFT")
+    assert config.columns.ra_random is None
+
+
+# ==========================================
+# [Recon] IS THE ONE STRICT SECTION
+# ==========================================
+def test_typo_in_recon_is_rejected(tmp_path, catalogs):
+    """A dropped key is a run that silently used the default instead."""
+    text = Path(_write_parfile(tmp_path, catalogs)).read_text()
+    path = tmp_path / "typo.ini"
+    path.write_text(text.replace("\nR_sm = 15.0\n", "\nR_smm = 15.0\n"))
+    with pytest.raises(ValueError, match="R_smm"):
         CatalogConfig.from_ini(str(path))
+
+
+def test_foreign_keys_in_recon_are_rejected(tmp_path, catalogs):
+    """A processing element's own settings do not belong in baorecon's section."""
+    text = Path(_write_parfile(tmp_path, catalogs)).read_text()
+    path = tmp_path / "foreign.ini"
+    path.write_text(text.replace("\n[Recon]\n",
+                                 "\n[Recon]\nnside_mask = 1024\nopt_nmesh = false\n"))
+    with pytest.raises(ValueError, match="nside_mask"):
+        CatalogConfig.from_ini(str(path))
+
+
+def test_foreign_keys_in_their_own_section_are_ignored(tmp_path, catalogs):
+    """...and that is where they go: unknown sections are the extension point."""
+    text = Path(_write_parfile(tmp_path, catalogs)).read_text()
+    path = tmp_path / "scoped.ini"
+    path.write_text(text + "\n[Recon.Euclid]\nnside_mask = 1024\nopt_nmesh = false\n")
+
+    config = CatalogConfig.from_ini(str(path))
+    assert "nside_mask" not in config.reconstruction
+    assert config.reconstruction["R_sm"] == pytest.approx(15.0)
 
 
 def test_missing_required_key_is_rejected(tmp_path, catalogs):
@@ -296,8 +348,10 @@ def test_coordinates_may_be_omitted(tmp_path, catalogs):
 def test_unknown_2pcf_sections_and_keys_are_ignored(tmp_path, catalogs):
     """A file carrying the 2PCF's own blocks must still load.
 
-    This is what lets one parfile serve both codes: baorecon reads the blocks it
-    knows and steps over [2PCF], [Catalog.Reconstructed], density, mask, ...
+    The two codes keep separate parameter files in the same format, and the
+    [Catalog.*] and [Cosmology] blocks are copied between them. The 2PCF's
+    versions carry density, mask, name and more, so a copied block has to load
+    as it stands rather than needing the other code's keys stripped out first.
     """
     text = Path(_write_parfile(tmp_path, catalogs)).read_text()
     # Anchor on the whole line: "[Catalog.Random]" also appears inside comments,
@@ -322,6 +376,61 @@ def test_unknown_2pcf_sections_and_keys_are_ignored(tmp_path, catalogs):
     config = CatalogConfig.from_ini(str(path))
     assert config.columns.ra == "RA"
     assert config.cosmology["H0"] == pytest.approx(67.11)
+
+
+# ==========================================
+# COSMOLOGY BEYOND THE COMOVING DISTANCE
+# ==========================================
+def test_cosmology_extra_reports_what_create_cosmology_cannot_take(tmp_path, catalogs):
+    """The inert 2PCF keys are validated and then reported, not dropped."""
+    config = CatalogConfig.from_ini(_write_parfile(tmp_path, catalogs))
+
+    # `cosmology` stays exactly the create_cosmology call payload: it is
+    # splatted into it, so a stray key there would be a TypeError.
+    assert set(config.cosmology) <= {"H0", "Om0", "Ob0", "Tcmb0", "Mnu", "name"}
+
+    extra = config.cosmology_extra
+    assert extra["ns"] == pytest.approx(0.96)
+    assert extra["sigma8"] == pytest.approx(0.83)
+    assert extra["Omega_L"] == pytest.approx(0.6825)
+    assert extra["h"] == pytest.approx(0.6711)
+    assert extra["w0"] == pytest.approx(-1.0)
+
+
+def test_cosmology_extra_picks_up_keys_the_2pcf_block_lacks(tmp_path, catalogs):
+    """`As` and `om_nu` have no 2PCF key; added to the block, they come through.
+
+    A linear power spectrum needs both, and without them a code layered on top
+    has to re-read the file for itself.
+    """
+    text = Path(_write_parfile(tmp_path, catalogs)).read_text()
+    path = tmp_path / "with_as.ini"
+    path.write_text(text.replace("\nsigma8 = 0.83\n",
+                                 "\nsigma8 = 0.83\nAs = 2.13e-9\nom_nu = 0.0\n"))
+
+    extra = CatalogConfig.from_ini(str(path)).cosmology_extra
+    assert extra["As"] == pytest.approx(2.13e-9)
+    assert extra["Omega_nu"] == pytest.approx(0.0)
+
+
+def test_cosmology_extra_is_empty_when_the_block_carries_nothing_extra(tmp_path, catalogs):
+    """It is optional: a minimal [Cosmology] simply produces nothing."""
+    text = Path(_write_parfile(tmp_path, catalogs)).read_text()
+    minimal = []
+    for line in text.splitlines(keepends=True):
+        key = line.split("=")[0].strip()
+        if key in ("om_vac", "om_k", "om_radiation", "spectral_index",
+                   "w_eos", "N_eff", "sigma8", "hubble"):
+            continue
+        minimal.append(line)
+    path = tmp_path / "minimal_cosmo.ini"
+    # `hubble` was dropped above but H0 needs it; put it back on its own.
+    path.write_text("".join(minimal).replace("\nHubble = 100.0\n",
+                                             "\nHubble = 100.0\nhubble = 0.6711\n"))
+
+    config = CatalogConfig.from_ini(str(path))
+    assert config.cosmology["H0"] == pytest.approx(67.11)
+    assert config.cosmology_extra == {"h": pytest.approx(0.6711)}
 
 
 # ==========================================
@@ -359,8 +468,18 @@ def test_ini_and_yaml_produce_equivalent_config(tmp_path, catalogs):
     assert from_ini.random_hdu == from_yaml.random_hdu
     assert from_ini.catalog_name == from_yaml.catalog_name
 
-    # Column mapping: identical, keep_cols included.
-    assert asdict(from_ini.columns) == asdict(from_yaml.columns)
+    # Column mapping. Compared through coordinates(), because the two examples
+    # express the same thing differently on purpose: the parfile spells the
+    # random coordinate columns out (the 2PCF shape carries them per catalogue),
+    # the YAML leaves the optional block out and inherits. The resolved names are
+    # what anything downstream sees.
+    assert from_ini.columns.coordinates(True) == from_yaml.columns.coordinates(True)
+    assert from_ini.columns.coordinates(False) == from_yaml.columns.coordinates(False)
+    ini_rest = asdict(from_ini.columns)
+    yaml_rest = asdict(from_yaml.columns)
+    for key in ("ra_random", "dec_random", "redshift_random"):
+        ini_rest.pop(key), yaml_rest.pop(key)
+    assert ini_rest == yaml_rest
 
     # Cosmology: the INI carries `name` from cosmology_ID, the YAML spells its
     # own label, so compare the numbers and check both name the same universe.
@@ -389,3 +508,9 @@ def test_ini_and_yaml_produce_equivalent_config(tmp_path, catalogs):
 
     for key in ("folder", "naming_pattern", "format", "save_metadata", "save"):
         assert from_ini.output[key] == from_yaml.output[key], key
+
+    # The background beyond the distance: the INI derives it from the 2PCF
+    # spelling, the YAML states it directly, and the two must agree.
+    assert set(from_ini.cosmology_extra) == set(from_yaml.cosmology_extra)
+    for key, value in from_ini.cosmology_extra.items():
+        assert value == pytest.approx(from_yaml.cosmology_extra[key]), key

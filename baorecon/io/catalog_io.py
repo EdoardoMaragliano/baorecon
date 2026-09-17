@@ -53,7 +53,7 @@ class Catalog:
         if not cols.keep_cols:
             return None
 
-        needed: List[str] = [cols.ra, cols.dec, cols.redshift]
+        needed: List[str] = list(cols.coordinates(is_data))
         weight = cols.weight_data if is_data else cols.weight_random
         identifier = cols.id_data if is_data else cols.id_random
         if weight is not None:
@@ -138,16 +138,18 @@ class Catalog:
 
         columns = self.config.columns
 
+        data_ra, data_dec, data_z = columns.coordinates(is_data=True)
         data_pos = (
-            np.asarray(self.data[columns.ra], dtype=target_dtype),
-            np.asarray(self.data[columns.dec], dtype=target_dtype),
-            np.asarray(self.data[columns.redshift], dtype=target_dtype),
+            np.asarray(self.data[data_ra], dtype=target_dtype),
+            np.asarray(self.data[data_dec], dtype=target_dtype),
+            np.asarray(self.data[data_z], dtype=target_dtype),
         )
 
+        random_ra, random_dec, random_z = columns.coordinates(is_data=False)
         random_pos = (
-            np.asarray(self.random[columns.ra], dtype=target_dtype),
-            np.asarray(self.random[columns.dec], dtype=target_dtype),
-            np.asarray(self.random[columns.redshift], dtype=target_dtype),
+            np.asarray(self.random[random_ra], dtype=target_dtype),
+            np.asarray(self.random[random_dec], dtype=target_dtype),
+            np.asarray(self.random[random_z], dtype=target_dtype),
         )
 
         if columns.weight_data is not None:
@@ -211,10 +213,10 @@ class Catalog:
         if df is None:
             raise RuntimeError("Catalog not loaded.")
 
-        # Fetch the original column names from the config.
-        col_ra = self.config.columns.ra
-        col_dec = self.config.columns.dec
-        col_z = self.config.columns.redshift
+        # Fetch the original column names from the config: the output keeps the
+        # spelling of the catalogue it came from, which for the randoms may
+        # differ from the data's.
+        col_ra, col_dec, col_z = self.config.columns.coordinates(is_data)
 
         # Overwrite the original coordinates with the reconstructed ones. Accept
         # either a (ra, dec) pair (no intermediate allocation) or an (N, 2) array.
