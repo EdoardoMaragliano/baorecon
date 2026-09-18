@@ -8,6 +8,60 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [0.8.0] - 2026-09-18
 
 ### Added
+- A template-driven FITS writer. `CatalogBackend.write` takes `template`, `hdu`
+  and `strict`; given a template the FITS backend builds the output against that
+  file's schema instead of writing the frame as it stands, inheriting column
+  order, `TFORM`, `TUNIT`, `TDIM`, the non-structural header keywords, the
+  primary HDU and every other HDU. `CHECKSUM`/`DATASUM` describe the data block,
+  so copying them from a template with a different number of rows would produce
+  a file that fails its own verification; they are recomputed instead, and only
+  for a template that had them. Without a template nothing changes -- the
+  historical `Table.from_pandas(df).write(path)` path is untouched, and Parquet
+  ignores all three arguments, as it already ignores `hdu` on read. Select it
+  with `[Output] template = input`, which resolves per tracer to the catalogue
+  that tracer was read from; `Catalog.write_output` does the resolving, so the
+  two pipelines needed no change. `strict` decides what happens when the frame
+  and the template disagree on the column set: by default extra columns are
+  appended (the `S_X`/`S_Y`/`S_Z` of `tracer_displacements`) and absent ones are
+  filled at the template's dtype (what `keep_cols` leaves out), while `true`
+  makes either an error -- for callers whose output must stay substitutable for
+  its input. The row count is never constrained, because the case this exists
+  for is writing a masked catalogue back against the file it came from.
+  A template only transfers a schema between files of the same format, so a
+  non-FITS template handed to the FITS writer is a `ValueError` naming the
+  configuration that caused it rather than astropy's "No SIMPLE card found" from
+  somewhere inside `fits.open` -- reachable with Parquet inputs, a FITS
+  `output.format` and `template = input`. Parquet output logs the template it is
+  ignoring, because one that quietly does nothing is worse than one that does
+  something unexpected.
+
+### Changed
+- `CatalogBackend.write` now takes `template`, `hdu` and `strict` after its two
+  positional arguments. Callers are unaffected -- the new parameters are keyword
+  with defaults, and without a template the written file is what it was before.
+  Backends implemented outside the package are not: an override with the old
+  two-argument signature still satisfies the abstract method, so the class
+  instantiates and fails later with a `TypeError` when the pipeline writes. Both
+  in-tree backends are updated.
+- The randoms may name their coordinate columns differently from the data.
+  `ColumnMapping` gains `ra_random`/`dec_random`/`redshift_random`, read from
+  `[Catalog.Random]`'s `coord1`/`coord2`/`coord3` and from a
+  `columns.coordinates.random` block in the YAML; unset, they inherit the data
+  names, so nothing written before this changes meaning. Use
+  `ColumnMapping.coordinates(is_data)` rather than the attributes -- the
+  fallback is applied there, and both the read and the output table go through
+  it, so a random written back keeps its own spelling. This lets observed data
+  be paired with randoms written to another convention, which the loader used to
+  reject outright.
+- `CatalogConfig.cosmology_extra`: the `[Cosmology]` parameters
+  `create_cosmology` cannot take -- `ns`, `sigma8`, `Omega_L`, `Omega_k`,
+  `Omega_r`, `w0`, `N_eff`, `h`, and `As`/`Omega_nu` where the parfile supplies
+  them -- reported under canonical names instead of validated and dropped.
+  `cosmology` stays exactly the call payload it always was, because it is
+  splatted into `create_cosmology`. Reconstruction never reads the new field: it
+  asks the background only for a comoving distance. It is there for codes
+  layered on top that need more, such as the linear power spectrum behind a
+  growth rate, which until now had to re-read the parfile for itself.
 - Test coverage for three things that had none. `rec-iso` was never constructed
   anywhere in the suite although it takes its own branch in `_shift_randoms`;
   it is now covered by what *distinguishes* it from `rec-sym` — in redshift space
@@ -88,6 +142,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   do not pick the same solver unless one of them says so). `n_iterations` moves to
   `**kwargs`, where it now works; the signature had promoted a solver-specific
   option above the choice of solver itself.
+
+### Changed
+- `[Recon]` now rejects a key nothing reads, naming it and listing the known
+  ones. Everywhere else the INI loader still steps over what it does not
+  recognise, and deliberately: reconstruction and the 2PCF keep separate
+  parameter files in the same format, with `[Catalog.*]` and `[Cosmology]`
+  largely in common, and those blocks are copied across carrying keys this code
+  does not read (`density`, `mask`, `name`, `om_k`, `N_eff`). `[Recon]` is the
+  exception because it has no counterpart in the 2PCF file -- nothing is ever
+  copied into it -- so an unrecognised key there is a typo, and silently
+  dropping it meant a run that used the default while the file said otherwise. This is the same
+  decision already taken for `BAOReconstructor`'s keyword arguments, now applied
+  to the parameter file. A code layered on top puts its settings in a section of
+  its own: unknown sections remain ignored, and that is the extension point.
 
 ### Fixed
 - `n_iterations` was accepted everywhere and ingested nowhere. `BAOReconstructor`

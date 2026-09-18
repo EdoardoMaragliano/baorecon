@@ -20,6 +20,13 @@ columns:
     ra: "RA"
     dec: "DEC"
     redshift: "REDSHIFT"
+    # The randoms may spell their coordinates differently -- observed data
+    # against randoms written to another convention. Omit the block, or any key
+    # in it, to inherit the names above.
+    # random:
+    #   ra: "RIGHT_ASCENSION"
+    #   dec: "DECLINATION"
+    #   redshift: "SPE_Z"
   weights:
     data: "WEIGHT"
     random: "WEIGHT"
@@ -57,6 +64,21 @@ cosmology:
   Ob0: 0.049
   Tcmb0: 2.7255
   name: "Planck18-like"
+
+# Background parameters beyond the five create_cosmology takes. Reconstruction
+# never reads them -- it asks the background only for a comoving distance -- so
+# this block is optional. It is here for codes layered on top that need more,
+# such as the linear power spectrum behind a growth rate. The INI front-end
+# fills it from the 2PCF [Cosmology] block, which carries these keys already.
+cosmology_extra:
+  Omega_r: 0.0
+  Omega_L: 0.6825
+  Omega_k: 0.0
+  ns: 0.96
+  sigma8: 0.83
+  w0: -1.0
+  N_eff: 3.03
+  h: 0.6711
 
 reconstruction:
   redshift: 0.55
@@ -106,6 +128,20 @@ output:
   # Output catalog format: "fits" (default) or "parquet".
   format: fits
   save_metadata: true
+  # FITS only. Build the output against an existing file's schema instead of
+  # writing the frame as it stands, inheriting its column order, TFORM, TUNIT,
+  # TDIM, non-structural header keywords, primary HDU and every other HDU.
+  # CHECKSUM/DATASUM describe the data, so they are recomputed, and only for a
+  # template that carried them.
+  #   none (default)  no template
+  #   input           each tracer against the catalogue it was read from
+  #   <path>          one explicit file, for both tracers
+  # template: input
+  # What to do when the output and the template disagree on the column set.
+  # false (default) appends what the template lacks and fills what the frame
+  # does not supply; true makes either an error -- for a product that has to
+  # stay substitutable for its input. Row counts are never constrained.
+  # template_strict: false
   # Control which artifacts to save. If omitted, defaults to ['catalogs'].
   # Multiple options can be active at the same time by uncommenting them.
   save:

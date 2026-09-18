@@ -152,6 +152,21 @@ by default; a local line of sight is unaffected, being equivariant under rotatio
 The rotation matrix is written to the metadata sidecar, which the saved grids need
 since they stay in the rotated frame.
 
+Output catalogues can be written against a **template** (step 9). By default the
+frame is written as it stands, which keeps the numbers and drops everything else
+FITS carries: units, display formats, header keywords, the other HDUs. Setting
+`output.template: input` builds each catalogue against the file its rows were
+read from instead, so it inherits that file's column order, `TFORM`, `TUNIT`,
+`TDIM`, non-structural header keywords, primary HDU and every other HDU. The
+`CHECKSUM`/`DATASUM` pair describes the data block, so it is recomputed rather
+than inherited -- and only for a template that carried one. Use it wherever a
+derived catalogue has to stay interchangeable with the one it came from. With
+`output.template_strict: true` the output may not gain or lose a column relative
+to the template, which turns a schema drift into an error instead of a product
+that verifies but no longer matches its input. Row counts are never constrained:
+a masked catalogue is shorter than its template by design. FITS only -- Parquet
+carries its schema in the frame itself.
+
 See [baorecon/pipeline/README.md](baorecon/pipeline/README.md) for the full workflow, with [examples/bao_pipeline_example.yaml](examples/bao_pipeline_example.yaml) and the equivalent [examples/bao_pipeline_parfile.ini](examples/bao_pipeline_parfile.ini) as annotated templates.
 
 ## Working precision

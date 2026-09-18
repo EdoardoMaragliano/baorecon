@@ -81,6 +81,51 @@ Installing `fitsio` enables true column-subset reads for FITS inputs; without
 it, FITS reads fall back to Astropy and prune columns in memory. Parquet
 requires `pyarrow` (a core `baorecon` dependency).
 
+### Writing against a template (FITS)
+
+`Table.from_pandas(df).write(path)` keeps the values and discards everything
+else the file carried. Set `output.template` to build the output against an
+existing file's schema instead:
+
+| value | effect |
+|---|---|
+| unset / `none` | write the frame as it stands (the historical behaviour) |
+| `input` | each tracer against the catalogue it was read from (`data_path` for the data, `random_path` for the randoms) |
+| a path | that one file, for both tracers |
+
+The output then inherits the template's column order, `TFORM`, `TUNIT`, `TDIM`,
+its non-structural header keywords, its primary HDU and every other HDU it has.
+`CHECKSUM`/`DATASUM` describe the data block and cannot be inherited -- copied
+from a template with a different number of rows they would be wrong, and a file
+that fails its own checksum reads as corrupt to every verifier -- so they are
+recomputed, and only for a template that had them.
+
+`output.template_strict` decides what happens when the output and the template
+disagree on the column set:
+
+- `false` (default): columns the template lacks are appended (the `S_X`/`S_Y`/`S_Z`
+  of `tracer_displacements`), and columns the frame does not supply are filled at
+  the template's dtype (what `keep_cols` left out).
+- `true`: either disagreement is an error. This is the setting for a product that
+  has to stay substitutable for its input, where a new column is a schema drift
+  to catch rather than a feature.
+
+The row count is never constrained -- writing a masked catalogue back against
+its own input is the case this exists for.
+
+```yaml
+output:
+  format: fits
+  template: input          # none (default) | input | /path/to/schema.fits
+  template_strict: false   # true: the column set may not change
+```
+
+A template carries a schema, and a schema only transfers between files of the
+same format. Parquet output ignores `template` and says so in the log; a
+non-FITS template handed to the FITS writer is an error naming the mismatch,
+which is what Parquet inputs plus `format: fits` and `template: input` would
+otherwise produce deep inside Astropy.
+
 ### Working precision
 
 The `reconstruction.dtype` key sets the floating-point precision used for the

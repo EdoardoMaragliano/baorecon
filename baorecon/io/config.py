@@ -18,7 +18,7 @@ import configparser
 import math
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
@@ -174,6 +174,76 @@ def _coordinate_input_from_ini(section, filepath: str) -> Optional[str]:
     return _INI_COORDINATE_INPUTS[key]
 
 
+#: Every key ``from_ini`` consumes from ``[Recon]``.
+#:
+#: That section is baorecon's alone -- the 2PCF parameter file has no
+#: ``[Recon]`` -- so an unrecognised key in it is a mistake rather than a key
+#: carried over from elsewhere, and is rejected. The blocks the two files share
+#: (``[Catalog.*]``, ``[Cosmology]``) stay tolerant, because they are copied
+#: between the files and the 2PCF's versions carry keys baorecon does not read
+#: (``density``, ``mask``, ``name``, ``om_k``, ``N_eff`` ...).
+#:
+#: A downstream processing element with settings of its own therefore puts them
+#: in its own section, not here: unknown sections are ignored by design, and
+#: that is the extension point.
+_RECON_KEYS = frozenset({
+    "redshift", "RSDspace", "nmesh", "cellsize", "padding", "R_sm", "pbc",
+    "align_cone", "rectype", "f", "bias", "MAS", "threshold_randoms",
+    "solver_type", "n_iterations", "device", "dtype", "boxsize", "boxcentre",
+    "los",
+})
+
+
+def _reject_unknown_recon_keys(section, filepath: str) -> None:
+    """Refuse a ``[Recon]`` key nothing reads.
+
+    Silently dropping one turns a typo -- ``smothing``, ``rec_type`` -- into a
+    run that quietly used the default, which is the kind of mistake that only
+    shows up in the results.
+    """
+    unknown = sorted(set(section.keys()) - _RECON_KEYS)
+    if not unknown:
+        return
+    raise ValueError(
+        "[Recon] key(s) nothing reads: {0} (in {1}). Known keys: {2}. "
+        "Settings belonging to another code go in a section of their own; "
+        "sections baorecon does not know are ignored.".format(
+            ", ".join(repr(k) for k in unknown), filepath,
+            ", ".join(sorted(_RECON_KEYS)))
+    )
+
+
+#: ``[Cosmology]`` keys that ``create_cosmology`` cannot take, and the
+#: canonical name each is reported under in
+#: :attr:`CatalogConfig.cosmology_extra`.
+_COSMOLOGY_EXTRA = {
+    "om_nu": "Omega_nu", "om_radiation": "Omega_r", "om_vac": "Omega_L",
+    "om_k": "Omega_k", "spectral_index": "ns", "As": "As", "sigma8": "sigma8",
+    "w_eos": "w0", "N_eff": "N_eff", "hubble": "h",
+}
+
+
+def _cosmology_extra_from_ini(section) -> Dict[str, Any]:
+    """The rest of ``[Cosmology]``, for consumers that need more than a distance.
+
+    ``cosmology`` carries exactly the five arguments ``create_cosmology``
+    takes, because it is splatted into that call. Reconstruction needs nothing
+    else -- the comoving distance is all it asks of the background. A code
+    computing a linear power spectrum does need more, and until now those keys
+    were validated and then dropped, so it had to re-read the file to get them.
+    """
+    extra: Dict[str, Any] = {}
+    for key, name in _COSMOLOGY_EXTRA.items():
+        raw = _raw(section, key)
+        if raw in (_MISSING, None) or (isinstance(raw, str) and not raw.strip()):
+            continue
+        try:
+            extra[name] = float(raw)
+        except (TypeError, ValueError):
+            logger.warning("[Cosmology] %s = %r is not a number; ignored.", key, raw)
+    return extra
+
+
 def _cosmology_from_ini(section) -> Dict[str, Any]:
     """Translate the shared 2PCF ``[Cosmology]`` block to create_cosmology kwargs.
 
@@ -205,16 +275,35 @@ def _cosmology_from_ini(section) -> Dict[str, Any]:
 
 @dataclass
 class ColumnMapping:
-    """FITS column mapping for data and random catalogues."""
+    """FITS column mapping for data and random catalogues.
+
+    ``ra``/``dec``/``redshift`` name the coordinate columns. The randoms may
+    name theirs differently through ``ra_random``/``dec_random``/
+    ``redshift_random``; left unset they fall back to the data names, which is
+    the common case and what every configuration written before those three
+    fields existed means. Use :meth:`coordinates` rather than the attributes, so
+    the fallback is applied in one place.
+    """
 
     ra: str
     dec: str
     redshift: str
+    ra_random: Optional[str] = None
+    dec_random: Optional[str] = None
+    redshift_random: Optional[str] = None
     weight_data: Optional[str] = None
     weight_random: Optional[str] = None
     id_data: Optional[str] = None
     id_random: Optional[str] = None
     keep_cols: List[str] = field(default_factory=list)
+
+    def coordinates(self, is_data: bool = True) -> Tuple[str, str, str]:
+        """``(ra, dec, redshift)`` column names of one of the two catalogues."""
+        if is_data:
+            return self.ra, self.dec, self.redshift
+        return (self.ra_random or self.ra,
+                self.dec_random or self.dec,
+                self.redshift_random or self.redshift)
 
 
 @dataclass
@@ -233,6 +322,12 @@ class CatalogConfig:
     random_hdu: int = 1
     catalog_format: Optional[str] = None
     masking: Dict[str, Any] = field(default_factory=dict)
+    #: The [Cosmology] parameters ``create_cosmology`` cannot take -- ``As``,
+    #: ``ns``, ``Omega_nu``, ``sigma8`` and the rest -- under canonical names.
+    #: Empty unless the parfile supplies them. Reconstruction never reads it: it
+    #: is there for codes layered on top that need the background for more than
+    #: a comoving distance. Last in the field order so no positional call moves.
+    cosmology_extra: Dict[str, Any] = field(default_factory=dict)
 
     def __post_init__(self) -> None:
         if not Path(self.data_path).exists():
@@ -254,10 +349,17 @@ class CatalogConfig:
         weights_cfg = columns_cfg.get("weights", {})
         ids_cfg = columns_cfg.get("ids", {})
 
+        # The randoms may name their coordinates differently; a nested
+        # `coordinates.random` block overrides, and its absence inherits.
+        random_coords = coordinates_cfg.get("random", {})
+
         columns = ColumnMapping(
             ra=coordinates_cfg["ra"],
             dec=coordinates_cfg["dec"],
             redshift=coordinates_cfg["redshift"],
+            ra_random=random_coords.get("ra"),
+            dec_random=random_coords.get("dec"),
+            redshift_random=random_coords.get("redshift"),
             weight_data=weights_cfg.get("data"),
             weight_random=weights_cfg.get("random"),
             id_data=ids_cfg.get("data"),
@@ -280,24 +382,34 @@ class CatalogConfig:
             output=dict(config.get("output", {})),
             catalog_name=config.get("catalog_name"),
             masking=dict(config.get("masking", {})),
+            cosmology_extra=dict(config.get("cosmology_extra", {})),
         )
 
     @classmethod
     def from_ini(cls, filepath: str) -> "CatalogConfig":
         """Load configuration from a 2PCF/Euclid-style INI parameter file.
 
-        See ``examples/bao_pipeline_parfile.ini`` for the layout. Sections and
-        keys the reconstruction does not consume are ignored rather than
-        rejected -- a full 2PCF parfile's ``[2PCF]``, ``[Path]``,
-        ``[Catalog.Reconstructed]``, ``density``, ``mask`` and so on -- so the
-        same file can be handed to both codes.
+        See ``examples/bao_pipeline_parfile.ini`` for the layout.
+
+        Reconstruction and the 2PCF keep **separate** parameter files in the
+        same format, with ``[Catalog.*]`` and ``[Cosmology]`` largely in common.
+        Those blocks are meant to be copied across unchanged, and the 2PCF's
+        carry keys this code does not read -- ``density``, ``mask``, ``name``,
+        ``om_k``, ``N_eff`` -- so unknown keys there are ignored rather than
+        rejected, and a copied block needs no stripping. Unknown sections are
+        ignored for the same reason.
+
+        ``[Recon]`` is the exception: it is baorecon's own section, absent from
+        the 2PCF parfile, so a key nothing reads there is a typo rather than
+        another code's setting, and is rejected. A code layered on top puts its
+        settings in a section of its own.
 
         Raises
         ------
         ValueError
-            If a required section or key is missing, if the coordinate columns
-            disagree between the two catalogue sections, or if ``[Cosmology]``
-            describes a cosmology that is not flat LCDM.
+            If a required section or key is missing, if ``[Recon]`` carries a
+            key nothing reads, or if ``[Cosmology]`` describes a cosmology that
+            is not flat LCDM.
         """
         parser = configparser.ConfigParser()
         # Preserve key case: lower-casing would break both the 2PCF spellings
@@ -316,26 +428,22 @@ class CatalogConfig:
         random = parser["Catalog.Random"]
         cosmology_sec = parser["Cosmology"] if parser.has_section("Cosmology") else {}
         recon_sec = parser["Recon"] if parser.has_section("Recon") else {}
+        if parser.has_section("Recon"):
+            _reject_unknown_recon_keys(recon_sec, filepath)
         output_sec = parser["Output"] if parser.has_section("Output") else {}
 
         # --- Columns -------------------------------------------------------
-        # The config holds ONE set of coordinate column names for the run. The
-        # parfile carries them per catalogue (the 2PCF/Euclid shape), so a
-        # disagreement is rejected rather than silently resolved in favour of
-        # one section. Omitting them from [Catalog.Random] inherits the galaxy
-        # names, which is the common case.
+        # The parfile carries the coordinate columns per catalogue (the
+        # 2PCF/Euclid shape) and so does the config: a catalogue pair that
+        # spells them differently -- observed data against randoms written to
+        # another convention -- is expressible. Omitting them from
+        # [Catalog.Random] inherits the galaxy names, which is the common case.
         ra = _required(galaxy, "coord1", "Catalog.Galaxy", filepath)
         dec = _required(galaxy, "coord2", "Catalog.Galaxy", filepath)
         redshift = _required(galaxy, "coord3", "Catalog.Galaxy", filepath)
-        for key, galaxy_value in (("coord1", ra), ("coord2", dec), ("coord3", redshift)):
-            random_value = _optional(random, key)
-            if random_value is not None and random_value != galaxy_value:
-                raise ValueError(
-                    "[Catalog.Random] {0} = {1!r} does not match [Catalog.Galaxy] "
-                    "{0} = {2!r}; baorecon uses one set of coordinate columns for "
-                    "both catalogues (in {3})".format(
-                        key, random_value, galaxy_value, filepath)
-                )
+        ra_random = _optional(random, "coord1")
+        dec_random = _optional(random, "coord2")
+        redshift_random = _optional(random, "coord3")
 
         keep_raw = _raw(galaxy, "keep_cols")
         keep_cols = [] if keep_raw in (_MISSING, None) else _to_list(keep_raw)
@@ -344,6 +452,9 @@ class CatalogConfig:
             ra=ra,
             dec=dec,
             redshift=redshift,
+            ra_random=ra_random,
+            dec_random=dec_random,
+            redshift_random=redshift_random,
             weight_data=_optional(galaxy, "weight"),
             weight_random=_optional(random, "weight"),
             id_data=_optional(galaxy, "id"),
@@ -394,6 +505,8 @@ class CatalogConfig:
         _put(output, output_sec, "naming_pattern", str)
         _put(output, output_sec, "format", str)
         _put(output, output_sec, "save_metadata", _to_bool)
+        _put(output, output_sec, "template", str)
+        _put(output, output_sec, "template_strict", _to_bool)
         _put(output, output_sec, "save", _to_list)
 
         logger.info("Loaded reconstruction config from {0}".format(filepath))
@@ -407,6 +520,7 @@ class CatalogConfig:
             columns=columns,
             coordinate_system=coordinate_system,
             cosmology=_cosmology_from_ini(cosmology_sec),
+            cosmology_extra=_cosmology_extra_from_ini(cosmology_sec),
             reconstruction=reconstruction,
             output=output,
             catalog_name=_optional(output_sec, "catalog_name"),
