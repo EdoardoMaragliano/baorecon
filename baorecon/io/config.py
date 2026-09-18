@@ -505,6 +505,8 @@ class CatalogConfig:
         _put(output, output_sec, "naming_pattern", str)
         _put(output, output_sec, "format", str)
         _put(output, output_sec, "save_metadata", _to_bool)
+        _put(output, output_sec, "template", str)
+        _put(output, output_sec, "template_strict", _to_bool)
         _put(output, output_sec, "save", _to_list)
 
         logger.info("Loaded reconstruction config from {0}".format(filepath))

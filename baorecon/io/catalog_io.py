@@ -241,6 +241,28 @@ class Catalog:
 
         return df
 
+    def _template_for(self, is_data: bool) -> Tuple[Optional[str], Optional[int]]:
+        """The schema template for this tracer, and the HDU to take it from.
+
+        ``output.template`` is either ``"input"`` -- the catalogue these rows
+        were read from, which is the case worth having a default for -- an
+        explicit path, or ``"none"``/unset for no template at all. Resolving it
+        here rather than at the call sites means the pipelines do not have to
+        know which file a tracer came from; they already told the config.
+        """
+        # getattr: a config with no [Output] block simply has no template.
+        setting = (getattr(self.config, "output", None) or {}).get("template")
+        if setting is None or str(setting).strip().lower() in ("", "none"):
+            return None, None
+
+        hdu = self.config.data_hdu if is_data else self.config.random_hdu
+        if str(setting).strip().lower() == "input":
+            path = self.config.data_path if is_data else self.config.random_path
+            return str(path), hdu
+        # An explicit template is one file for both tracers, so it keeps the
+        # data HDU: there is no second extension to pick between.
+        return str(setting), self.config.data_hdu
+
     def write_output(
         self,
         path: str,
@@ -249,6 +271,8 @@ class Catalog:
         reconstructed_redshift: Optional[np.ndarray] = None,
         displacements: Optional[np.ndarray] = None,
         fmt: Optional[str] = None,
+        template: Optional[str] = None,
+        strict: Optional[bool] = None,
     ) -> None:
         """Build the reconstructed catalog and write it to ``path``.
 
@@ -257,6 +281,12 @@ class Catalog:
         format is taken from ``fmt`` when given, otherwise inferred from the
         ``path`` extension. Keeping construction and writing together means the
         column-building logic lives in exactly one place.
+
+        ``template`` and ``strict`` override ``output.template`` and
+        ``output.template_strict`` for this one call; left unset they come from
+        the configuration. See
+        :func:`baorecon.io.backends.fits_backend.write_like_template` for what a
+        template buys and what ``strict`` refuses.
         """
         output = self.build_output_table(
             is_data=is_data,
@@ -264,5 +294,18 @@ class Catalog:
             reconstructed_redshift=reconstructed_redshift,
             displacements=displacements,
         )
-        get_backend(path, fmt).write(output, path)
+
+        if template is None:
+            template, hdu = self._template_for(is_data)
+        else:
+            hdu = self.config.data_hdu if is_data else self.config.random_hdu
+        if strict is None:
+            strict = bool((getattr(self.config, "output", None) or {})
+                          .get("template_strict", False))
+
+        get_backend(path, fmt).write(
+            output, path, template=template, hdu=hdu, strict=strict
+        )
+        if template is not None:
+            logger.info("Wrote against the schema of {0}".format(template))
         logger.info("Saved {0} catalog to {1}".format("data" if is_data else "random", path))

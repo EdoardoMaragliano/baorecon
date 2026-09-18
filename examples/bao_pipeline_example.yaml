@@ -128,6 +128,20 @@ output:
   # Output catalog format: "fits" (default) or "parquet".
   format: fits
   save_metadata: true
+  # FITS only. Build the output against an existing file's schema instead of
+  # writing the frame as it stands, inheriting its column order, TFORM, TUNIT,
+  # TDIM, non-structural header keywords, primary HDU and every other HDU.
+  # CHECKSUM/DATASUM describe the data, so they are recomputed, and only for a
+  # template that carried them.
+  #   none (default)  no template
+  #   input           each tracer against the catalogue it was read from
+  #   <path>          one explicit file, for both tracers
+  # template: input
+  # What to do when the output and the template disagree on the column set.
+  # false (default) appends what the template lacks and fills what the frame
+  # does not supply; true makes either an error -- for a product that has to
+  # stay substitutable for its input. Row counts are never constrained.
+  # template_strict: false
   # Control which artifacts to save. If omitted, defaults to ['catalogs'].
   # Multiple options can be active at the same time by uncommenting them.
   save:

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional
 
 from baorecon.io.backends.base import CatalogBackend
-from baorecon.io.backends.fits_backend import FitsBackend
+from baorecon.io.backends.fits_backend import FitsBackend, write_like_template
 from baorecon.io.backends.parquet_backend import ParquetBackend
 
 # Canonical format name -> backend class.
@@ -56,4 +56,5 @@ __all__ = [
     "ParquetBackend",
     "get_backend",
     "resolve_format",
+    "write_like_template",
 ]

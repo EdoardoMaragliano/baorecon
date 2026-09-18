@@ -8,6 +8,41 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ## [Unreleased]
 
 ### Added
+- A template-driven FITS writer. `CatalogBackend.write` takes `template`, `hdu`
+  and `strict`; given a template the FITS backend builds the output against that
+  file's schema instead of writing the frame as it stands, inheriting column
+  order, `TFORM`, `TUNIT`, `TDIM`, the non-structural header keywords, the
+  primary HDU and every other HDU. `CHECKSUM`/`DATASUM` describe the data block,
+  so copying them from a template with a different number of rows would produce
+  a file that fails its own verification; they are recomputed instead, and only
+  for a template that had them. Without a template nothing changes -- the
+  historical `Table.from_pandas(df).write(path)` path is untouched, and Parquet
+  ignores all three arguments, as it already ignores `hdu` on read. Select it
+  with `[Output] template = input`, which resolves per tracer to the catalogue
+  that tracer was read from; `Catalog.write_output` does the resolving, so the
+  two pipelines needed no change. `strict` decides what happens when the frame
+  and the template disagree on the column set: by default extra columns are
+  appended (the `S_X`/`S_Y`/`S_Z` of `tracer_displacements`) and absent ones are
+  filled at the template's dtype (what `keep_cols` leaves out), while `true`
+  makes either an error -- for callers whose output must stay substitutable for
+  its input. The row count is never constrained, because the case this exists
+  for is writing a masked catalogue back against the file it came from.
+  A template only transfers a schema between files of the same format, so a
+  non-FITS template handed to the FITS writer is a `ValueError` naming the
+  configuration that caused it rather than astropy's "No SIMPLE card found" from
+  somewhere inside `fits.open` -- reachable with Parquet inputs, a FITS
+  `output.format` and `template = input`. Parquet output logs the template it is
+  ignoring, because one that quietly does nothing is worse than one that does
+  something unexpected.
+
+### Changed
+- `CatalogBackend.write` now takes `template`, `hdu` and `strict` after its two
+  positional arguments. Callers are unaffected -- the new parameters are keyword
+  with defaults, and without a template the written file is what it was before.
+  Backends implemented outside the package are not: an override with the old
+  two-argument signature still satisfies the abstract method, so the class
+  instantiates and fails later with a `TypeError` when the pipeline writes. Both
+  in-tree backends are updated.
 - The randoms may name their coordinate columns differently from the data.
   `ColumnMapping` gains `ra_random`/`dec_random`/`redshift_random`, read from
   `[Catalog.Random]`'s `coord1`/`coord2`/`coord3` and from a

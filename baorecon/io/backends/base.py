@@ -32,5 +32,29 @@ class CatalogBackend(ABC):
         """
 
     @abstractmethod
-    def write(self, df: pd.DataFrame, path: str) -> None:
-        """Write ``df`` to ``path`` in this backend's format."""
+    def write(
+        self,
+        df: pd.DataFrame,
+        path: str,
+        template: Optional[str] = None,
+        hdu: Optional[int] = None,
+        strict: bool = False,
+    ) -> None:
+        """Write ``df`` to ``path`` in this backend's format.
+
+        ``template`` names an existing file whose *schema* the output should
+        reproduce: column order and per-column metadata, plus whatever else the
+        format carries around the table. It is honoured by formats rich enough
+        to have a schema worth preserving (FITS) and ignored otherwise, the way
+        ``read`` treats ``hdu`` -- which here selects the table inside the
+        template, and the table the output replaces.
+
+        ``strict`` decides what happens when the frame and the template disagree
+        on the column set. With ``False`` (the default) columns absent from the
+        template are appended and columns the frame does not supply are filled,
+        so a catalogue may gain derived columns or carry fewer than it read.
+        With ``True`` either disagreement is an error, which is what a caller
+        wants when the output has to stay substitutable for its input.
+
+        Backends that ignore ``template`` ignore ``strict`` with it.
+        """
