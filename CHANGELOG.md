@@ -34,15 +34,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `output.format` and `template = input`. Parquet output logs the template it is
   ignoring, because one that quietly does nothing is worse than one that does
   something unexpected.
-
-### Changed
-- `CatalogBackend.write` now takes `template`, `hdu` and `strict` after its two
-  positional arguments. Callers are unaffected -- the new parameters are keyword
-  with defaults, and without a template the written file is what it was before.
-  Backends implemented outside the package are not: an override with the old
-  two-argument signature still satisfies the abstract method, so the class
-  instantiates and fails later with a `TypeError` when the pipeline writes. Both
-  in-tree backends are updated.
 - The randoms may name their coordinate columns differently from the data.
   `ColumnMapping` gains `ra_random`/`dec_random`/`redshift_random`, read from
   `[Catalog.Random]`'s `coord1`/`coord2`/`coord3` and from a
@@ -137,6 +128,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   the reconstructed positions are the output as-is.
 
 ### Changed
+- `CatalogBackend.write` now takes `template`, `hdu` and `strict` after its two
+  positional arguments. Callers are unaffected -- the new parameters are keyword
+  with defaults, and without a template the written file is what it was before.
+  Backends implemented outside the package are not: an override with the old
+  two-argument signature still satisfies the abstract method, so the class
+  instantiates and fails later with a `TypeError` when the pipeline writes. Both
+  in-tree backends are updated.
 - `reconstruct_positions` names `solver_type` (default `"multigrid"`, unchanged —
   note the example parfiles configure `"ifft"`, so a call here and a pipeline run
   do not pick the same solver unless one of them says so). `n_iterations` moves to
