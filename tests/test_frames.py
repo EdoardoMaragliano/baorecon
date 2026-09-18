@@ -27,15 +27,43 @@ def to_angles(positions):
 
 
 def angle_between(a, b):
-    """Angle in degrees between two vectors."""
+    """Angle in degrees between two vectors.
+
+    Uses the chord, 2*arcsin(|a - b| / 2), not arccos(a . b). arccos is ill
+    conditioned for nearly parallel vectors -- its derivative diverges at 1 --
+    so one ulp of error in the dot product becomes 1.2e-6 degrees, and the
+    function cannot return anything between 0 and 8.54e-7. That gap swallowed
+    every tolerance below it: the axis comparisons here assert 1e-10 and 1e-8,
+    so they were really demanding bit-exact parallelism, and failed whenever a
+    parallel reduction rounded the last bit the other way. The chord form is
+    accurate across the whole range, from 1e-14 degrees to 180.
+
+    The clip is not decorative: |a - b| can round just above 2 for antipodal
+    inputs, where arcsin then returns NaN.
+    """
     a = np.asarray(a, dtype=np.float64) / np.linalg.norm(a)
     b = np.asarray(b, dtype=np.float64) / np.linalg.norm(b)
-    return float(np.degrees(np.arccos(np.clip(a @ b, -1.0, 1.0))))
+    chord = np.linalg.norm(a - b) / 2.0
+    return float(np.degrees(2.0 * np.arcsin(np.clip(chord, 0.0, 1.0))))
 
 
 def ra_diff(a, b):
     """Minimal RA difference in degrees, robust to the 0/360 wrap."""
     return np.abs((a - b + 180.0) % 360.0 - 180.0)
+
+
+@pytest.mark.parametrize("theta", [1e-14, 1e-10, 1e-8, 1e-6, 1e-3, 1.0, 90.0, 180.0])
+def test_angle_between_resolves_small_angles(theta):
+    """The helper must not quantise away the separations the axis tests assert.
+
+    arccos(a . b) returns exactly 0.0 for every angle below 8.54e-7 degrees,
+    which is four orders above the 1e-10 these tests use: with it they passed by
+    saturation and failed on a single unlucky bit. Pinned here so the helper
+    cannot quietly go back.
+    """
+    th = np.radians(theta)
+    measured = angle_between([0.0, 0.0, 1.0], [np.sin(th), 0.0, np.cos(th)])
+    assert measured == pytest.approx(theta, rel=1e-6)
 
 
 def patch(ra_c=170.0, dec_c=10.0, size=40.0, n=20_000, seed=0, dtype=np.float64):
@@ -133,10 +161,25 @@ def test_axis_does_not_depend_on_the_distances():
     rng = np.random.default_rng(7)
     near = unit_vectors(ra, dec) * rng.uniform(10.0, 20.0, ra.size)[:, None]
     far = unit_vectors(ra, dec) * rng.uniform(5000.0, 9000.0, ra.size)[:, None]
-    assert angle_between(
-        ConeFrame.from_positions(near).mean_direction,
-        ConeFrame.from_positions(far).mean_direction,
-    ) < 1e-10
+
+    near_axis = np.asarray(ConeFrame.from_positions(near).mean_direction)
+    far_axis = np.asarray(ConeFrame.from_positions(far).mean_direction)
+    angle = angle_between(near_axis, far_axis)
+
+    # The two routes agree to about 1e-14 degrees: the unit vectors differ by up
+    # to 1.5 ulp before the sum even starts, because u -> u*r -> (u*r)/|u*r| does
+    # not round-trip exactly. angle_between resolves that, so the threshold below
+    # keeps four orders of margin. The axes are reported at full precision
+    # because their difference is what separates rounding from a real drift.
+    assert angle < 1e-10, (
+        "axis moved by {0:.6e} deg (resolution floor 1.2e-06)\n"
+        "  near = {1}\n"
+        "  far  = {2}".format(
+            angle,
+            np.array2string(near_axis, precision=17, floatmode="maxprec_equal"),
+            np.array2string(far_axis, precision=17, floatmode="maxprec_equal"),
+        )
+    )
 
 
 def test_raw_position_mean_would_be_distance_biased():
