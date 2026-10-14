@@ -70,9 +70,11 @@ cosmology:
 # this block is optional. It is here for codes layered on top that need more,
 # such as the linear power spectrum behind a growth rate. The INI front-end
 # fills it from the 2PCF [Cosmology] block, which carries these keys already.
+# Omega_r and Omega_L are what astropy derives from Tcmb0 and H0 (with its own
+# N_eff = 3.04) and integrates; Omega_r is not zero unless Tcmb0 is.
 cosmology_extra:
-  Omega_r: 0.0
-  Omega_L: 0.6825
+  Omega_r: 9.2819e-05
+  Omega_L: 0.6824072
   Omega_k: 0.0
   ns: 0.96
   sigma8: 0.83

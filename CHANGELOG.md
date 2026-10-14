@@ -156,6 +156,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own: unknown sections remain ignored, and that is the extension point.
 
 ### Fixed
+- The `[Cosmology]` check described a cosmology other than the one integrated.
+  It required `om_radiation = 0`, on the grounds that a flat LCDM fixes it, and
+  compared `om_vac` with `1 - om_matter`. But `FlatLambdaCDM` is built with
+  `Tcmb0 = 2.7255` by default, so astropy derives Omega_r from `Tcmb` and `h`
+  (with its own N_eff = 3.04; the parfile's `N_eff` is not read) and integrates
+  it, and the dark energy is `1 - om_matter - Omega_r`. The distances were right
+  for the cosmology built; the check was not. It refused the true value (the 2PCF
+  DR1 block's `om_radiation = 9.259e-05`), and silently accepted
+  `om_radiation = 0`, which does not switch radiation off: someone writing it to
+  mean "no radiation", as for the CommonLibs, got distances ~1e-4 away from the
+  ones they expected, with no warning.
+
+  `om_radiation` is now compared with the Omega_r astropy derives and refused if
+  it is more than 1% away (N_eff conventions alone account for a few 1e-3; 1%
+  moves distances by ~1e-6). `om_radiation = 0` is accepted only with
+  `Tcmb = 0`, which is what actually switches radiation off. `om_vac` is compared
+  with `1 - om_matter - Omega_r`, still as a warning, at a tolerance (1e-5) that
+  can tell the two apart. Neither key is an input -- `Tcmb` is. The example
+  parfile and YAML now carry the consistent values (`om_radiation = 9.2819e-05`,
+  `om_vac = 0.6824072`) and say so. Parfiles with `om_radiation = 0` and
+  `Tcmb > 0` will now fail to load.
+
 - `n_iterations` was accepted everywhere and ingested nowhere. `BAOReconstructor`
   declared `**kwargs` and never stored them, so the keyword — passed by
   `reconstruct_positions`, by `ReconstructionPipeline.build_reconstructor`, and

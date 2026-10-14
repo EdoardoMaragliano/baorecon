@@ -17,6 +17,7 @@ from astropy.table import Table
 import numpy as np
 
 from baorecon.io.config import CatalogConfig
+from baorecon.utils.coordinates import create_cosmology
 
 EXAMPLES = Path(__file__).resolve().parents[1] / "examples"
 PARFILE = EXAMPLES / "bao_pipeline_parfile.ini"
@@ -191,22 +192,73 @@ def test_non_lambda_dark_energy_is_rejected(tmp_path, catalogs):
         CatalogConfig.from_ini(path)
 
 
-def test_inconsistent_om_vac_warns_but_loads(tmp_path, catalogs, caplog):
-    """om_vac is derived, so a stale value is a warning rather than an error."""
-    path = _write_parfile(tmp_path, catalogs, **{"om_vac = 0.6825": "om_vac = 0.70"})
-
+def _load_logging_warnings(path, caplog):
+    """Load a parfile, capturing the warnings the loader logs."""
     # setup_logger sets propagate=False, so caplog's root handler never sees
     # these records; attach it to the module logger directly.
     module_logger = logging.getLogger("baorecon.io.config")
     module_logger.addHandler(caplog.handler)
     try:
         with caplog.at_level(logging.WARNING, logger="baorecon.io.config"):
-            config = CatalogConfig.from_ini(path)
+            return CatalogConfig.from_ini(path)
     finally:
         module_logger.removeHandler(caplog.handler)
 
+
+def test_inconsistent_om_vac_warns_but_loads(tmp_path, catalogs, caplog):
+    """om_vac is derived, so a stale value is a warning rather than an error."""
+    path = _write_parfile(tmp_path, catalogs, **{"om_vac = 0.6824072": "om_vac = 0.70"})
+
+    config = _load_logging_warnings(path, caplog)
+
     assert config.cosmology["Om0"] == pytest.approx(0.3175)
     assert "om_vac" in caplog.text
+
+
+def test_om_vac_without_radiation_warns(tmp_path, catalogs, caplog):
+    """1 - om_matter is not what astropy uses: it subtracts Omega_r as well."""
+    path = _write_parfile(tmp_path, catalogs, **{"om_vac = 0.6824072": "om_vac = 0.6825"})
+
+    _load_logging_warnings(path, caplog)
+
+    assert "1 - om_matter - Omega_r" in caplog.text
+
+
+def test_shipped_parfile_matches_the_integrated_cosmology(tmp_path, catalogs, caplog):
+    """om_radiation and om_vac in the example are what the pipelines integrate."""
+    config = _load_logging_warnings(_write_parfile(tmp_path, catalogs), caplog)
+    cosmo = create_cosmology(**config.cosmology)
+
+    assert config.cosmology_extra["Omega_r"] == pytest.approx(
+        cosmo.Ogamma0 + cosmo.Onu0, rel=1e-4)
+    assert config.cosmology_extra["Omega_L"] == pytest.approx(cosmo.Ode0, abs=1e-7)
+    assert "om_vac" not in caplog.text
+
+
+def test_zero_radiation_with_positive_tcmb_is_rejected(tmp_path, catalogs):
+    """om_radiation = 0 does not switch radiation off; refuse rather than ignore."""
+    path = _write_parfile(tmp_path, catalogs,
+                          **{"om_radiation = 9.2819e-05": "om_radiation = 0.0"})
+    with pytest.raises(ValueError, match="om_radiation"):
+        CatalogConfig.from_ini(path)
+
+
+def test_radiation_within_tolerance_is_accepted(tmp_path, catalogs):
+    """The 2PCF DR1 value: another N_eff/h convention, same cosmology to ~1e-6."""
+    path = _write_parfile(tmp_path, catalogs,
+                          **{"om_radiation = 9.2819e-05": "om_radiation = 9.259e-05"})
+    assert CatalogConfig.from_ini(path).cosmology["Tcmb0"] == pytest.approx(2.7255)
+
+
+def test_zero_radiation_is_accepted_with_zero_tcmb(tmp_path, catalogs):
+    """Tcmb = 0 is what switches radiation off, and then om_radiation = 0 is right."""
+    path = _write_parfile(tmp_path, catalogs, **{
+        "Tcmb = 2.7255": "Tcmb = 0.0",
+        "om_radiation = 9.2819e-05": "om_radiation = 0.0",
+        "om_vac = 0.6824072": "om_vac = 0.6825",
+    })
+    config = CatalogConfig.from_ini(path)
+    assert create_cosmology(**config.cosmology).Ogamma0 == 0.0
 
 
 def test_randoms_may_name_their_coordinates_differently(tmp_path, catalogs):
@@ -392,7 +444,7 @@ def test_cosmology_extra_reports_what_create_cosmology_cannot_take(tmp_path, cat
     extra = config.cosmology_extra
     assert extra["ns"] == pytest.approx(0.96)
     assert extra["sigma8"] == pytest.approx(0.83)
-    assert extra["Omega_L"] == pytest.approx(0.6825)
+    assert extra["Omega_L"] == pytest.approx(0.6824072)
     assert extra["h"] == pytest.approx(0.6711)
     assert extra["w0"] == pytest.approx(-1.0)
 
