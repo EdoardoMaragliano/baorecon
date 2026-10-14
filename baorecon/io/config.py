@@ -22,6 +22,7 @@ from typing import Any, Callable, Dict, List, Optional, Tuple
 
 import yaml
 
+from baorecon.utils.coordinates import create_cosmology
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
@@ -110,17 +111,34 @@ def _scalar_or_list(cast: Callable[[str], Any]) -> Callable[[str], Any]:
 
 
 # Parameters that FlatLambdaCDM fixes by construction, with the value it implies.
-_FLAT_LCDM_FIXED = (("om_k", 0.0), ("om_radiation", 0.0), ("w_eos", -1.0))
+_FLAT_LCDM_FIXED = (("om_k", 0.0), ("w_eos", -1.0))
+
+#: Relative tolerance on ``om_radiation`` against the radiation astropy derives.
+#: astropy fixes N_eff = 3.04, while parfiles carry 3.03, 3.044 or 3.046 and
+#: rounded constants; that moves Omega_r by a few 1e-3. A 1% mismatch shifts the
+#: comoving distance by ~1e-6, whereas leaving radiation out (om_radiation = 0
+#: with Tcmb > 0) shifts it by ~1e-4 and is a 100% mismatch.
+_OM_RADIATION_RTOL = 1e-2
+
+#: Absolute tolerance on ``om_vac``. Tight enough to tell 1 - om_matter from
+#: 1 - om_matter - Omega_r (Omega_r ~ 9e-5), loose enough for five decimals.
+_OM_VAC_ATOL = 1e-5
 
 
-def _validate_flat_lcdm(section, om_matter: Optional[float]) -> None:
+def _validate_flat_lcdm(section, cosmology: Dict[str, Any]) -> None:
     """Reject a ``[Cosmology]`` block this code cannot actually represent.
 
     The inert 2PCF keys are only inert because the reconstruction needs nothing
-    but the comoving distance of a flat LCDM, which pins om_k, om_radiation and
-    w_eos. A parfile that sets them elsewhere is not "extra detail we ignore" --
-    it is a different cosmology, and dropping it silently would produce wrong
-    distances with no warning anywhere.
+    but the comoving distance of a flat LCDM, which pins om_k and w_eos. A
+    parfile that sets them elsewhere is not "extra detail we ignore" -- it is a
+    different cosmology, and dropping it silently would produce wrong distances
+    with no warning anywhere.
+
+    Radiation is not pinned to zero. astropy derives it from Tcmb and h, with
+    its own N_eff = 3.04 (the parfile's ``N_eff`` is not read), and integrates
+    it; ``om_radiation`` and ``om_vac`` are never inputs. They are therefore
+    checked against what astropy derives -- Omega_r, and 1 - om_matter - Omega_r
+    -- so the parfile cannot describe a cosmology other than the one integrated.
     """
     for key, fixed in _FLAT_LCDM_FIXED:
         raw = _raw(section, key)
@@ -133,14 +151,30 @@ def _validate_flat_lcdm(section, om_matter: Optional[float]) -> None:
                 "otherwise run with wrong comoving distances.".format(key, raw, fixed)
             )
 
+    # The very object the pipelines build, defaults included.
+    cosmo = create_cosmology(**cosmology)
+    om_r = float(cosmo.Ogamma0 + cosmo.Onu0)
+
+    om_radiation = _raw(section, "om_radiation")
+    if om_radiation not in (_MISSING, None) and not math.isclose(
+            float(om_radiation), om_r, rel_tol=_OM_RADIATION_RTOL):
+        raise ValueError(
+            "[Cosmology] om_radiation = {0} disagrees with the radiation density "
+            "this code integrates, which astropy derives from Tcmb = {1} K, "
+            "h = {2} and N_eff = {3}: Omega_r = {4:.6e}. om_radiation is not an "
+            "input; set it to that value, or set Tcmb = 0 to switch radiation "
+            "off.".format(om_radiation, cosmo.Tcmb0.value, cosmo.h, cosmo.Neff, om_r)
+        )
+
     om_vac = _raw(section, "om_vac")
-    if om_vac not in (_MISSING, None) and om_matter is not None:
-        implied = 1.0 - om_matter
-        if not math.isclose(float(om_vac), implied, abs_tol=1e-4):
+    if om_vac not in (_MISSING, None):
+        implied = float(cosmo.Ode0)
+        if not math.isclose(float(om_vac), implied, abs_tol=_OM_VAC_ATOL):
             logger.warning(
-                "[Cosmology] om_vac = %s, but flatness implies 1 - om_matter = %.6f. "
-                "The parfile value is ignored; %.6f is used.",
-                om_vac, implied, implied,
+                "[Cosmology] om_vac = %s, but flatness implies "
+                "1 - om_matter - Omega_r = %.8f (Omega_r = %.6e, derived from "
+                "Tcmb). The parfile value is ignored; %.8f is used.",
+                om_vac, implied, om_r, implied,
             )
 
 
@@ -269,7 +303,7 @@ def _cosmology_from_ini(section) -> Dict[str, Any]:
     _put(cosmology, section, "Tcmb", float, name="Tcmb0")
     _put(cosmology, section, "cosmology_ID", str, name="name")
 
-    _validate_flat_lcdm(section, cosmology.get("Om0"))
+    _validate_flat_lcdm(section, cosmology)
     return cosmology
 
 
