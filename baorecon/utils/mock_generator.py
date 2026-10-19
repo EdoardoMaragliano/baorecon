@@ -2,6 +2,45 @@ import numpy as np
 from baorecon.utils.loggers import setup_logger
 logger = setup_logger(__name__)
 
+def _gaussian_field_fourier(pk_grid, volume, n_cell, rng=np.random):
+    """
+    Draw a Gaussian random field in Fourier space with power spectrum ``pk_grid``.
+
+    The field is built as the FFT of real white noise, ``W_k = rfftn(w)`` with
+    ``w ~ N(0, 1)`` per cell, scaled by ``sqrt(P(k) V / N^3)``. Being the transform
+    of a real field, ``W_k`` is Hermitian by construction, including on the
+    self-conjugate planes ``k_z = 0`` and ``k_z = Nyquist`` where the previous
+    amplitude-and-phase drawing left ``delta(k)`` and ``delta(-k)`` independent and
+    ``irfftn`` silently halved their power. ``<|W_k|^2> = N^3`` for every mode, so
+    ``<|delta_k|^2> = V P(k)``, with Rayleigh-distributed moduli as a complex
+    Gaussian mode requires.
+
+    Parameters
+    ----------
+    pk_grid : ndarray, shape (n, n, n//2 + 1)
+        Power spectrum evaluated on the ``rfftn`` grid, in the convention
+        ``<|delta_k|^2> = V P(k)``. Negative or NaN entries are set to zero.
+    volume : float
+        Box volume ``side**3``.
+    n_cell : int
+        Number of cells per side.
+    rng : numpy random generator, optional
+        Source of the white noise: the global ``np.random`` module (default) or a
+        ``np.random.Generator``.
+
+    Returns
+    -------
+    delta_k : ndarray, complex, shape (n, n, n//2 + 1)
+        Hermitian Fourier coefficients with the zero mode set to 0.
+    """
+    pk_grid = np.nan_to_num(np.asarray(pk_grid, dtype=float), nan=0.0)
+    pk_grid = np.clip(pk_grid, 0.0, None)
+    white = rng.normal(size=(n_cell, n_cell, n_cell))
+    delta_k = np.fft.rfftn(white) * np.sqrt(pk_grid * volume / n_cell**3)
+    delta_k[0, 0, 0] = 0.0
+    return delta_k
+
+
 def generate_gaussian_map(pk_func, side, spacing, seed=None):
 
     """
@@ -16,7 +55,7 @@ def generate_gaussian_map(pk_func, side, spacing, seed=None):
     spacing : float
         The grid spacing for the Fourier transform. Determines the resolution of the grid.
     seed : int or None, optional
-        Seed for the random phases and amplitudes. ``None`` (default) draws from
+        Seed for the white noise behind the field. ``None`` (default) draws from
         NumPy's global generator, so ``np.random.seed`` keeps working; an integer
         uses a private ``np.random.default_rng(seed)`` and makes the field reproducible.
 
@@ -55,17 +94,11 @@ def generate_gaussian_map(pk_func, side, spacing, seed=None):
     knorm = np.sqrt(KX**2+KY**2+KZ**2)
     pks = pk_func(knorm)
 
+    # Hermitian Gaussian field: FFT of real white noise scaled by sqrt(P V / N^3)
     rng = np.random if seed is None else np.random.default_rng(seed)
-    #generate a random phase
-    phase = rng.uniform(size=pks.shape)*2*np.pi
-    #generate a norm
-    delta_k_norm = rng.normal(size=pks.shape)*np.sqrt(pks*volume)
+    delta_k = _gaussian_field_fourier(pks, volume, n_cell, rng)
 
-    delta_k_norm[0,0,0]=0
-
-    delta_k = delta_k_norm*(np.cos(phase)+1j*np.sin(phase))
-
-    delta_x = np.fft.irfftn(delta_k, norm='backward')/spacing**3
+    delta_x = np.fft.irfftn(delta_k, s=(n_cell, n_cell, n_cell), norm='backward')/spacing**3
 
     return delta_k, delta_x
 
@@ -83,7 +116,7 @@ def generate_lognormal_map(pk_func, side, spacing, seed=None):
         spacing : float
         The grid spacing for the Fourier transform. Determines the resolution of the grid.
         seed : int or None, optional
-        Seed for the random phases and amplitudes. ``None`` (default) draws from
+        Seed for the white noise behind the field. ``None`` (default) draws from
         NumPy's global generator, so ``np.random.seed`` keeps working; an integer
         uses a private ``np.random.default_rng(seed)`` and makes the field reproducible.
         
@@ -125,19 +158,17 @@ def generate_lognormal_map(pk_func, side, spacing, seed=None):
     # generate gaussian 2PCF
     xi_g = np.log(1+xi)
 
-    # get PS from xi_g
-    pk_g = np.fft.rfftn(xi_g) * spacing**3
+    # get PS from xi_g. The transform of log(1 + xi) is real up to round-off and is
+    # not guaranteed to be positive everywhere: negative values are clipped to zero
+    # (standard lognormal prescription; the old code took sqrt of a complex array).
+    pk_g = np.clip((np.fft.rfftn(xi_g) * spacing**3).real, 0.0, None)
 
-    # generate G(k), a gaussian field in Fourier space with power spectrum pk_g
+    # generate G(k), a Hermitian gaussian field in Fourier space with power spectrum pk_g
     rng = np.random if seed is None else np.random.default_rng(seed)
-    phase = rng.uniform(size=pks.shape)*2*np.pi                   #random phase
-    G_k_norm = rng.normal(size=pks.shape)*np.sqrt(pk_g*volume)    #such that <G_k G_k^*> = P_g(k)
-    G_k_norm[0,0,0] = 0
-
-    G_k = G_k_norm *(np.cos(phase)+1j*np.sin(phase))
+    G_k = _gaussian_field_fourier(pk_g, volume, n_cell, rng)
 
     # Compute G(x), the gaussian field in real space
-    G_x = np.fft.irfftn(G_k, norm='backward')/spacing**3
+    G_x = np.fft.irfftn(G_k, s=(n_cell, n_cell, n_cell), norm='backward')/spacing**3
 
     print('mean of G_x is = ', np.mean(G_x))
     # get delta from G_x using lognormal transform

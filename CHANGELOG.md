@@ -15,6 +15,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   generator, so `np.random.seed` still applies).
 
 ### Fixed
+- `utils.mock_generator`: the Gaussian field behind `generate_gaussian_map` and
+  `generate_lognormal_map` is now drawn as the FFT of real white noise scaled by
+  `sqrt(P(k) V / N^3)` (shared `_gaussian_field_fourier`). The previous
+  amplitude-and-phase drawing filled the `rfftn` half-space independently, so on
+  the self-conjugate planes `k_z = 0` and `k_z = Nyquist` `delta(k)` and
+  `delta(-k)` were unrelated; `irfftn` symmetrises them silently and their power
+  was halved. Since the `k_z = 0` modes add coherently along the `z` axis, the
+  field lost a constant ~`(1/2piL) int k P dk` of correlation for separations
+  along `z` (about 0.01 for a 1 Gpc/h box with b=2 at z=1), i.e. a spurious
+  quadrupole when `z` is the line of sight. The moduli were also half-normal
+  rather than Rayleigh. `generate_lognormal_map` now clips negative values of the
+  Gaussian-field spectrum (the transform of `log(1+xi)` is not positive-definite)
+  instead of taking the square root of a complex array. Seeds give different
+  fields than before.
 - `BAOReconstructor.run_reconstruction` compared the solver *object* with the
   string `'multigrid'`, so the branch meant for the multigrid solver never ran
   and every multigrid reconstruction also built the `(nx, ny, nz, 3)`
