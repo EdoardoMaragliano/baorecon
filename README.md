@@ -17,7 +17,7 @@ In contrast to many existing implementations, `baorecon` is designed to be **lig
 * 🐍 **100% Pure Python:** Written entirely in Python with no C++ wrapper layer or complex compilation steps required.
 * ⚡ **JIT & GPU Accelerated:** Heavy mesh operations are extremely fast thanks to `njit`-compiled CPU kernels and `numba.cuda` GPU kernels.
 * 🪶 **Lightweight Dependencies:** Relies on common, standard scientific Python packages (NumPy, SciPy, pandas) rather than specialized or heavy external frameworks.
-* 🧩 **Highly Modular API:** Provides a one-line high-level API entry point, a survey-ready config-driven pipeline (YAML or Euclid/2PCF INI), and a modular structure that allows you to use individual components (e.g., solvers, density managers) independently.
+* 🧩 **Highly Modular API:** Provides a one-line high-level API entry point, a survey-ready config-driven pipeline (YAML or INI), and a modular structure that allows you to use individual components (e.g., solvers, density managers) independently.
 * 🧮 **Multiple Solvers:** Includes both FFT-based solvers and a Multigrid backend. *(Note: The multigrid backend currently includes standard Jacobi smoothing as well as a semi-experimental V-cycle solver based on multi-color Gauss-Seidel).*
 
 ## ⚙️ How it works
