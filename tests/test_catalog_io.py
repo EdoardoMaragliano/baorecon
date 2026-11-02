@@ -159,6 +159,12 @@ def test_legacy_reads_all_columns(mock_catalogs_setup):
 
 def test_parquet_roundtrip(tmp_path):
     """Lettura/estrazione dal backend Parquet (formato inferito dall'estensione)."""
+    # pandas reaches for pyarrow only when a parquet file is actually touched, so
+    # the gate goes on the tests that touch one rather than on the module -- the
+    # FITS tests in this file must keep running where pyarrow is absent, which
+    # includes EDEN 3.1, where the element is deployed.
+    pytest.importorskip("pyarrow", reason="optional: backs the parquet backend only")
+
     data_fpath = tmp_path / "mock_data.parquet"
     random_fpath = tmp_path / "mock_random.parquet"
 
@@ -178,6 +184,8 @@ def test_parquet_roundtrip(tmp_path):
 
 def test_fits_parquet_parity(tmp_path):
     """Gli stessi dati danno posizioni identiche da FITS e da Parquet."""
+    pytest.importorskip("pyarrow", reason="optional: backs the parquet backend only")
+
     data_dict = _make_data(50, seed=7)
     random_dict = _make_data(60, seed=8)
 
@@ -202,6 +210,10 @@ def test_fits_parquet_parity(tmp_path):
 @pytest.mark.parametrize("ext", ["fits", "parquet"])
 def test_write_output_roundtrip(tmp_path, ext):
     """write_output costruisce e scrive nel formato richiesto, rileggibile."""
+    if ext == "parquet":
+        pytest.importorskip("pyarrow",
+                            reason="optional: backs the parquet backend only")
+
     data_dict = _make_data(40, seed=3)
     random_dict = _make_data(40, seed=4)
     Table(data_dict).write(tmp_path / "d.fits", format="fits", overwrite=True)

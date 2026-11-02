@@ -54,7 +54,15 @@ def dummy_catalogs(tmp_path_factory):
 
 @pytest.fixture(scope="module", params=["fits", "parquet"])
 def output_format(request):
-    """Exercise both on-disk catalog output formats."""
+    """Exercise both on-disk catalog output formats.
+
+    The parquet half is skipped where pyarrow is absent -- it is an optional
+    dependency behind one backend, and EDEN 3.1 does not carry it. Gating here
+    rather than on each test covers every consumer of the fixture at once.
+    """
+    if request.param == "parquet":
+        pytest.importorskip("pyarrow",
+                            reason="optional: backs the parquet backend only")
     return request.param
 
 

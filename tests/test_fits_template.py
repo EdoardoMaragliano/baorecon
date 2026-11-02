@@ -248,6 +248,10 @@ def test_fits_backend_without_a_template_is_unchanged(tmp_path):
 
 
 def test_parquet_backend_ignores_the_template(tmp_path):
+    # Gated, not module-level: the FITS template tests around it are the ones
+    # that matter where pyarrow is absent -- EDEN 3.1, for one.
+    pytest.importorskip("pyarrow", reason="optional: backs the parquet backend only")
+
     template = _template(tmp_path / "t.fits")
     out = tmp_path / "o.parquet"
     frame = _frame()
@@ -339,6 +343,10 @@ def test_a_non_fits_template_is_refused_by_name(tmp_path):
     Without the check astropy fails inside ``fits.open`` with "No SIMPLE card
     found", which says nothing about the configuration that produced it.
     """
+    # The refusal itself is format-agnostic, but building a non-FITS template to
+    # provoke it needs a parquet writer.
+    pytest.importorskip("pyarrow", reason="optional: backs the parquet backend only")
+
     template = tmp_path / "t.parquet"
     _frame().to_parquet(template, index=False)
 
@@ -354,6 +362,8 @@ def test_parquet_output_says_it_is_ignoring_the_template(tmp_path, caplog):
     caplog's root handler never sees these records; it has to be hooked onto
     the module logger directly.
     """
+    pytest.importorskip("pyarrow", reason="optional: backs the parquet backend only")
+
     from baorecon.io.backends import parquet_backend
 
     template = _template(tmp_path / "t.fits")
