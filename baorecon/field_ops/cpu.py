@@ -410,3 +410,44 @@ def gradient_periodic_jit(phi, displacement, dx, dy, dz):
                 displacement[i,j,k,0] = (phi[ip,j,k] - phi[im,j,k]) / (2*dx)
                 displacement[i,j,k,1] = (phi[i,jp,k] - phi[i,jm,k]) / (2*dy)
                 displacement[i,j,k,2] = (phi[i,j,kp] - phi[i,j,km]) / (2*dz)
+
+
+###########################
+########## TRACER SHIFT
+###########################
+@njit(parallel=True, fastmath=True, cache=True, nogil=True)
+def shifted_positions_rsd(pos, psi, f, radial, los, out):
+    """Shifted tracer positions ``pos - (psi + f (psi . n) n)`` in one pass.
+
+    ``n`` is the line of sight: the radial unit vector ``pos/|pos|`` when
+    ``radial`` is True (no RSD term where ``|pos| == 0``), the fixed vector
+    ``los`` otherwise (``|los|`` need not be 1). ``f = 0`` gives the plain
+    real-space shift ``pos - psi``. Equivalent to
+    ``pos - (psi + BAOReconstructor.get_rsd_displacement(psi, pos))`` up to
+    rounding; no temporaries, all cores. ``out`` is returned.
+    """
+    for i in prange(pos.shape[0]):
+        x = pos[i, 0]
+        y = pos[i, 1]
+        z = pos[i, 2]
+        px = psi[i, 0]
+        py = psi[i, 1]
+        pz = psi[i, 2]
+        if radial:
+            nx = x
+            ny = y
+            nz = z
+        else:
+            nx = los[0]
+            ny = los[1]
+            nz = los[2]
+        n2 = nx * nx + ny * ny + nz * nz
+        if n2 > 0.0:
+            a = f * (px * nx + py * ny + pz * nz) / n2
+            px += a * nx
+            py += a * ny
+            pz += a * nz
+        out[i, 0] = x - px
+        out[i, 1] = y - py
+        out[i, 2] = z - pz
+    return out

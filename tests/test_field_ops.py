@@ -3,6 +3,7 @@ import numpy as np
 
 from baorecon.field_ops import (
     project_vector_field,
+    shifted_positions_rsd,
     interpolate_vector_field,
     divergence,
     smoothed_field,
@@ -131,3 +132,46 @@ def test_smoothed_field_reduces_variance():
     noisy_field = np.random.normal(0, 1.0, size=(N, N, N))
     smoothed = smoothed_field(noisy_field, mesh, smoothing_radius=2.0)
     assert np.var(smoothed) < np.var(noisy_field)
+
+
+# ---------------------------------------------------------------------------
+# shifted_positions_rsd (fused tracer shift)
+# ---------------------------------------------------------------------------
+
+def _reference_shift(pos, psi, f, radial, los):
+    """pos - (psi + f (psi . n) n) in plain numpy, n radial or fixed."""
+    if radial:
+        norm = np.linalg.norm(pos, axis=1, keepdims=True)
+        n = np.divide(pos, norm, out=np.zeros_like(pos), where=norm > 0)
+    else:
+        n = np.broadcast_to(los / np.linalg.norm(los), pos.shape)
+    return pos - (psi + f * np.sum(psi * n, axis=1, keepdims=True) * n)
+
+
+@pytest.mark.parametrize("dtype,atol", [(np.float32, 2e-4), (np.float64, 1e-10)])
+@pytest.mark.parametrize("radial", [True, False])
+def test_shifted_positions_rsd_matches_numpy_reference(dtype, atol, radial):
+    rng = np.random.default_rng(0)
+    pos = rng.uniform(-1000, 1000, (1000, 3)).astype(dtype)
+    pos[0] = 0.0  # |r| = 0: no RSD term there, must not divide by zero
+    psi = rng.normal(0, 3, (1000, 3)).astype(dtype)
+    los = np.array([0.0, 0.0, 1.0], dtype=dtype)
+    f = 0.8
+
+    out = shifted_positions_rsd(pos, psi, f, radial, los, np.empty_like(pos))
+    np.testing.assert_allclose(out, _reference_shift(pos, psi, f, radial, los), rtol=0, atol=atol)
+    assert out.dtype == dtype
+
+    # f = 0: plain real-space shift, whatever the line of sight
+    out0 = shifted_positions_rsd(pos, psi, 0.0, radial, los, np.empty_like(pos))
+    np.testing.assert_allclose(out0, pos - psi, rtol=0, atol=atol)
+
+
+def test_shifted_positions_rsd_fixed_los_need_not_be_unit():
+    rng = np.random.default_rng(1)
+    pos = rng.uniform(-100, 100, (200, 3))
+    psi = rng.normal(0, 1, (200, 3))
+    unit = np.array([0.0, 1.0, 0.0])
+    a = shifted_positions_rsd(pos, psi, 0.7, False, unit, np.empty_like(pos))
+    b = shifted_positions_rsd(pos, psi, 0.7, False, 3.5 * unit, np.empty_like(pos))
+    np.testing.assert_allclose(a, b, rtol=0, atol=1e-12)

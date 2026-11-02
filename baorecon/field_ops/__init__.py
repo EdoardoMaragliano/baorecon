@@ -11,6 +11,7 @@ from baorecon.field_ops._interface import (
     divergence_FFT,
     interpolate_vector_field,
     project_vector_field,
+    shifted_positions_rsd,
     smoothed_field,
 )
 
@@ -21,5 +22,6 @@ __all__ = [
     "divergence_FFT",
     "interpolate_vector_field",
     "project_vector_field",
+    "shifted_positions_rsd",
     "smoothed_field",
 ]

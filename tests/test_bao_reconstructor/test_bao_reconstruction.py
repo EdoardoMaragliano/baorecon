@@ -148,3 +148,28 @@ def test_bao_reconstructor_comparison_vs_pyrecon(los, rsd_space):
 
     correlation = np.corrcoef(delta_zelda.flatten(), (bias * delta_pyrecon).flatten())[0, 1]
     assert correlation > 0.95, f"Delta fields correlation too low: {correlation}"
+
+
+@pytest.mark.parametrize("rsd_space", ["RealSpace", "RedshiftSpace"])
+@pytest.mark.parametrize("los", [None, "z"])
+def test_run_reconstruction_matches_public_displacement_api(los, rsd_space):
+    """The fused shift kernel agrees with the public two-step API to rounding.
+
+    ``run_reconstruction`` must equal ``pos - (psi + get_rsd_displacement(psi, pos))``
+    built from the public methods, for the radial and the fixed line of sight.
+    """
+    rng = np.random.default_rng(7)
+    boxsize = 200.0
+    data_pos = rng.uniform(0, boxsize, size=(2000, 3))
+    random_pos = rng.uniform(0, boxsize, size=(6000, 3))
+    recon = BAOReconstructor(data_pos=data_pos, random_pos=random_pos, boxsize=boxsize,
+                             boxcentre=[boxsize / 2] * 3, nmesh=16, f=0.8, bias=1.5,
+                             rectype="rec-sym", RSDspace=rsd_space, los=los, pbc=False,
+                             dtype=np.float64)
+    data_rec, random_rec = recon.run_reconstruction()
+
+    for rec, pos in ((data_rec, recon.data_pos), (random_rec, recon.random_pos)):
+        psi = recon.interpolate_displacement(pos)
+        if rsd_space == "RedshiftSpace":
+            psi = psi + recon.get_rsd_displacement(psi, pos)
+        np.testing.assert_allclose(rec, pos - psi, rtol=0, atol=1e-9)

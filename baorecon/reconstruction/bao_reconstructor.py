@@ -10,7 +10,7 @@ from typing import Optional, Tuple
 
 import numpy as np
 
-from baorecon.field_ops import project_vector_field
+from baorecon.field_ops import project_vector_field, shifted_positions_rsd
 from baorecon.mesh.los import FixedAxisLOS, LocalLOS
 from baorecon.mesh.mesh import Mesh
 from baorecon.reconstruction.density import DensityManager
@@ -374,40 +374,40 @@ class BAOReconstructor:
             psi_parallel *= self._f
         return psi_parallel
 
+    def _shifted_positions(self, tracer_psi: np.ndarray, tracer_pos: np.ndarray,
+                           with_rsd: bool) -> np.ndarray:
+        """``tracer_pos - (tracer_psi + RSD term)`` in the survey frame, one fused pass.
+
+        The RSD term is ``f (Psi . n) n`` with the configured line of sight
+        (radial or fixed axis); ``with_rsd=False`` drops it (real space, or the
+        randoms of rec-iso). Same formula as :meth:`get_rsd_displacement`, which
+        stays as the public numpy reference; the two agree to rounding.
+        """
+        radial = self._los is None
+        los = (np.zeros(3, dtype=tracer_pos.dtype) if radial
+               else np.asarray(self._los_strategy.direction, dtype=tracer_pos.dtype))
+        f = float(self._f) if with_rsd else 0.0
+        out = np.empty_like(tracer_pos)
+        return shifted_positions_rsd(tracer_pos, tracer_psi, f, radial, los, out)
+
     def _shift_gals(self) -> np.ndarray:
-        # The DensityManager already mapped the catalogue to the box frame (and
-        # keeps the result), so read Psi there instead of re-running
-        # survey_to_box_frame on the survey-frame positions. The RSD term and
-        # the returned positions stay in the survey frame.
-        box_pos = self._density_manager.data_pos_box
-        if self._RSDspace == "RealSpace":
-            logger.info("Computing displacement for galaxies (real space)...")
-            return self.data_pos - self.interpolate_displacement(box_pos, survey_frame=False)
-        elif self._RSDspace == "RedshiftSpace":
-            logger.info("Computing RSD displacement for galaxies...")
-            tracer_psi = self.interpolate_displacement(box_pos, survey_frame=False)
-            rsd = self.get_rsd_displacement(tracer_psi, self.data_pos)
-            tracer_psi += rsd
-            return self.data_pos - tracer_psi
-        raise ValueError(f"Unknown RSDspace: {self._RSDspace}")
+        # Psi is read at the box-frame positions the DensityManager already
+        # holds (no second survey_to_box_frame); the shift itself happens in
+        # the survey frame.
+        logger.info(f"Computing displacement for galaxies ({self._RSDspace})...")
+        tracer_psi = self.interpolate_displacement(self._density_manager.data_pos_box,
+                                                   survey_frame=False)
+        return self._shifted_positions(tracer_psi, self.data_pos,
+                                       with_rsd=self._RSDspace == "RedshiftSpace")
 
     def _shift_randoms(self) -> np.ndarray:
-        # Same as _shift_gals: box-frame positions come from the DensityManager.
-        box_pos = self._density_manager.random_pos_box
-        if self._rectype == "rec-sym":
-            logger.info("Computing displacement for randoms (symmetric reconstruction)...")
-            if self._RSDspace == "RealSpace":
-                return self.random_pos - self.interpolate_displacement(box_pos, survey_frame=False)
-            elif self._RSDspace == "RedshiftSpace":
-                tracer_psi = self.interpolate_displacement(box_pos, survey_frame=False)
-                rsd = self.get_rsd_displacement(tracer_psi, self.random_pos)
-                tracer_psi += rsd
-                return self.random_pos - tracer_psi
-            raise ValueError(f"Unknown RSDspace: {self._RSDspace}")
-        elif self._rectype == "rec-iso":
-            tracer_psi = self.interpolate_displacement(box_pos, survey_frame=False)
-            return self.random_pos - tracer_psi
-        raise ValueError(f"Unknown rectype: {self._rectype}")
+        # rec-sym moves the randoms like the galaxies; rec-iso leaves out the
+        # RSD term so the randoms are shifted in real space only.
+        logger.info(f"Computing displacement for randoms ({self._rectype}, {self._RSDspace})...")
+        tracer_psi = self.interpolate_displacement(self._density_manager.random_pos_box,
+                                                   survey_frame=False)
+        with_rsd = self._rectype == "rec-sym" and self._RSDspace == "RedshiftSpace"
+        return self._shifted_positions(tracer_psi, self.random_pos, with_rsd=with_rsd)
 
     def run_reconstruction(self) -> Tuple[np.ndarray, np.ndarray]:
         logger.info(f"Starting BAO reconstruction ({self._solver_type.upper()})...")

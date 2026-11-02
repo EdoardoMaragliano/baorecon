@@ -10,6 +10,7 @@ import time
 import numpy as np
 
 from baorecon.field_ops import cpu as _cpu
+from baorecon.field_ops.cpu import shifted_positions_rsd  # host-side kernel, no GPU variant
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
