@@ -375,30 +375,37 @@ class BAOReconstructor:
         return psi_parallel
 
     def _shift_gals(self) -> np.ndarray:
+        # The DensityManager already mapped the catalogue to the box frame (and
+        # keeps the result), so read Psi there instead of re-running
+        # survey_to_box_frame on the survey-frame positions. The RSD term and
+        # the returned positions stay in the survey frame.
+        box_pos = self._density_manager.data_pos_box
         if self._RSDspace == "RealSpace":
             logger.info("Computing displacement for galaxies (real space)...")
-            return self.data_pos - self.interpolate_displacement(self.data_pos)
+            return self.data_pos - self.interpolate_displacement(box_pos, survey_frame=False)
         elif self._RSDspace == "RedshiftSpace":
             logger.info("Computing RSD displacement for galaxies...")
-            tracer_psi = self.interpolate_displacement(self.data_pos)
+            tracer_psi = self.interpolate_displacement(box_pos, survey_frame=False)
             rsd = self.get_rsd_displacement(tracer_psi, self.data_pos)
             tracer_psi += rsd
             return self.data_pos - tracer_psi
         raise ValueError(f"Unknown RSDspace: {self._RSDspace}")
 
     def _shift_randoms(self) -> np.ndarray:
+        # Same as _shift_gals: box-frame positions come from the DensityManager.
+        box_pos = self._density_manager.random_pos_box
         if self._rectype == "rec-sym":
             logger.info("Computing displacement for randoms (symmetric reconstruction)...")
             if self._RSDspace == "RealSpace":
-                return self.random_pos - self.interpolate_displacement(self.random_pos, survey_frame=True)
+                return self.random_pos - self.interpolate_displacement(box_pos, survey_frame=False)
             elif self._RSDspace == "RedshiftSpace":
-                tracer_psi = self.interpolate_displacement(self.random_pos, survey_frame=True)
+                tracer_psi = self.interpolate_displacement(box_pos, survey_frame=False)
                 rsd = self.get_rsd_displacement(tracer_psi, self.random_pos)
                 tracer_psi += rsd
                 return self.random_pos - tracer_psi
             raise ValueError(f"Unknown RSDspace: {self._RSDspace}")
         elif self._rectype == "rec-iso":
-            tracer_psi = self.interpolate_displacement(self.random_pos, survey_frame=True)
+            tracer_psi = self.interpolate_displacement(box_pos, survey_frame=False)
             return self.random_pos - tracer_psi
         raise ValueError(f"Unknown rectype: {self._rectype}")
 
