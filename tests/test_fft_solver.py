@@ -150,3 +150,35 @@ def test_fftsolver_realistic_grf_closure(device):
             atol=10.0, # Bump this back up to accommodate the float32 noise floor
             err_msg="Potential reconstruction exceeded expected float32 noise limits"
         )
+
+
+# ==========================================
+# END-TO-END CPU vs GPU
+# ==========================================
+@gpu_test
+@pytest.mark.parametrize("los", [None, "z"])
+@pytest.mark.parametrize("pbc", [True, False])
+def test_reconstruction_cpu_gpu_agree(pbc, los):
+    """``run_reconstruction`` on the GPU matches the CPU at float32 precision,
+    with and without periodic boundaries.
+
+    The non-periodic case exercises the boundary clamp of the GPU Psi read-out:
+    before it honoured ``pbc`` the two backends disagreed by several Mpc/h for
+    tracers in the last cell of the box.
+    """
+    from baorecon.reconstruction.bao_reconstructor import BAOReconstructor
+
+    rng = np.random.default_rng(3)
+    L = 500.0
+    data = rng.uniform(0, L, (20000, 3))
+    random = rng.uniform(0, L, (60000, 3))
+    out = {}
+    for device in ("cpu", "gpu"):
+        recon = BAOReconstructor(data_pos=data, random_pos=random, nmesh=32, boxsize=L,
+                                 boxcentre=[L / 2] * 3, padding=0.0, f=0.8, bias=1.5, R_sm=10.0,
+                                 rectype="rec-sym", RSDspace="RedshiftSpace", los=los, pbc=pbc,
+                                 solver_type="ifft", device=device, dtype=np.float32)
+        out[device] = recon.run_reconstruction()
+    for cpu_arr, gpu_arr in zip(out["cpu"], out["gpu"]):
+        assert isinstance(gpu_arr, np.ndarray)
+        np.testing.assert_allclose(gpu_arr, cpu_arr, rtol=0, atol=1e-3)

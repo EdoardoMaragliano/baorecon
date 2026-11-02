@@ -61,6 +61,47 @@ def test_interpolate_constant_vector_field_gpu(mas_scheme):
     np.testing.assert_allclose(interp_gpu, interp_cpu, atol=1e-4)
 
 
+@gpu_test
+@pytest.mark.parametrize("pbc", [True, False])
+@pytest.mark.parametrize("mas_scheme", ["CIC", "TSC"])
+def test_interpolate_boundary_policy_matches_cpu_gpu(mas_scheme, pbc):
+    """GPU read-out honours ``pbc`` like the CPU kernels: wrap when periodic,
+    clamp to the boundary cell otherwise.
+
+    A constant field cannot tell wrap from clamp (both give the constant), so
+    use a field that is linear in each coordinate -- its wrapped and clamped
+    values at the box edge differ by the full field range -- and sample inside
+    the last and first cell of every axis, where the stencil leaves the grid.
+    The GPU kernels used to ignore ``pbc`` and always wrap, so a ``pbc=False``
+    reconstruction read a Psi from the far face of the box near the edge.
+    """
+    nmesh = 8
+    boxsize = 10.0
+    cell = boxsize / nmesh
+    idx = np.arange(nmesh, dtype=np.float64)
+    field = np.zeros((nmesh, nmesh, nmesh, 3), dtype=np.float64)
+    field[..., 0] = idx[:, None, None]      # grows along x
+    field[..., 1] = idx[None, :, None]      # grows along y
+    field[..., 2] = idx[None, None, :]      # grows along z
+
+    rng = np.random.default_rng(0)
+    # Last half-cell and first half-cell of every axis, plus a few interior points.
+    edge_hi = rng.uniform(boxsize - 0.5 * cell, boxsize - 1e-6, size=(40, 3))
+    edge_lo = rng.uniform(0.0, 0.5 * cell, size=(40, 3))
+    inner = rng.uniform(cell, boxsize - cell, size=(40, 3))
+    pos = np.concatenate([edge_hi, edge_lo, inner])
+
+    interp_cpu = interpolate_vector_field(pos, field, boxsize, MAS=mas_scheme, pbc=pbc, dtype=np.float64)
+    interp_gpu = _to_host(interpolate_vector_field(cp.asarray(pos), cp.asarray(field), boxsize,
+                                                   MAS=mas_scheme, pbc=pbc, dtype=np.float32))
+
+    np.testing.assert_allclose(interp_gpu, interp_cpu, atol=1e-4)
+    if not pbc:
+        # Clamped: the field keeps growing up to the boundary node, never
+        # falls back towards the x=0 face (which wrapping would do).
+        assert (interp_gpu[:40] > nmesh - 2).all()
+
+
 # ==========================================
 # DIVERGENCE (FFT)
 # ==========================================

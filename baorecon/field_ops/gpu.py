@@ -1,8 +1,12 @@
 """GPU field operations (CuPy / numba.cuda).
 
 Mirrors :mod:`baorecon.field_ops.cpu` on the device: FFT divergence via
-``cupy.fft`` and CUDA-kernel CIC/TSC vector interpolation.
+``cupy.fft`` and CUDA-kernel CIC/TSC vector interpolation. The interpolators
+follow the CPU boundary policy: with ``pbc`` the stencil wraps periodically,
+without it out-of-range stencil cells are clamped to the boundary cell.
 """
+
+import math
 
 import numpy as np
 
@@ -30,7 +34,7 @@ def divergence_FFT(vector_field, k_components):
 if CUPY_AVAILABLE:
 
     @cuda.jit
-    def _read_cic_kernel(field, positions, boxsize, out_values):
+    def _read_cic_kernel(field, positions, boxsize, out_values, pbc):
         i = cuda.grid(1)
         if i >= positions.shape[0]:
             return
@@ -42,25 +46,27 @@ if CUPY_AVAILABLE:
         gx = positions[i, 0] * inv_x
         gy = positions[i, 1] * inv_y
         gz = positions[i, 2] * inv_z
-        ix0, iy0, iz0 = int(gx), int(gy), int(gz)
+        ix0 = int(math.floor(gx))   # floor, not trunc: matches the CPU kernels
+        iy0 = int(math.floor(gy))
+        iz0 = int(math.floor(gz))
         dx, dy, dz = gx - ix0, gy - iy0, gz - iz0
 
         for c in range(out_values.shape[1]):
             val = 0.0
             for l in range(2):
-                ix = (ix0 + l) % nx
+                ix = (ix0 + l) % nx if pbc else min(max(ix0 + l, 0), nx - 1)
                 wx = 1.0 - dx if l == 0 else dx
                 for m in range(2):
-                    iy = (iy0 + m) % ny
+                    iy = (iy0 + m) % ny if pbc else min(max(iy0 + m, 0), ny - 1)
                     wy = 1.0 - dy if m == 0 else dy
                     for n in range(2):
-                        iz = (iz0 + n) % nz
+                        iz = (iz0 + n) % nz if pbc else min(max(iz0 + n, 0), nz - 1)
                         wz = 1.0 - dz if n == 0 else dz
                         val += field[ix, iy, iz, c] * wx * wy * wz
             out_values[i, c] = val
 
     @cuda.jit
-    def _read_tsc_kernel(field, positions, boxsize, out_values):
+    def _read_tsc_kernel(field, positions, boxsize, out_values, pbc):
         i = cuda.grid(1)
         if i >= positions.shape[0]:
             return
@@ -82,34 +88,34 @@ if CUPY_AVAILABLE:
         for c in range(out_values.shape[1]):
             val = 0.0
             for l in range(3):
-                ix = (ix_c - 1 + l) % nx
+                ix = (ix_c - 1 + l) % nx if pbc else min(max(ix_c - 1 + l, 0), nx - 1)
                 for m in range(3):
-                    iy = (iy_c - 1 + m) % ny
+                    iy = (iy_c - 1 + m) % ny if pbc else min(max(iy_c - 1 + m, 0), ny - 1)
                     for n in range(3):
-                        iz = (iz_c - 1 + n) % nz
+                        iz = (iz_c - 1 + n) % nz if pbc else min(max(iz_c - 1 + n, 0), nz - 1)
                         val += field[ix, iy, iz, c] * wx[l] * wy[m] * wz[n]
             out_values[i, c] = val
 
 
 def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
-    """CIC interpolation of a vector field on the GPU (PBC only)."""
+    """CIC interpolation of a vector field on the GPU (periodic wrap or boundary clamp per ``pbc``)."""
     pos_dev = cp.asarray(pos, dtype=dtype)
     field_dev = cp.asarray(field, dtype=dtype)
     out = cp.empty((pos_dev.shape[0], 3), dtype=dtype)
     boxsize_dev = cp.asarray(np.broadcast_to(np.asarray(boxsize, dtype=np.float64), (3,)))
     tpb = 256
     bpg = (pos_dev.shape[0] + tpb - 1) // tpb
-    _read_cic_kernel[bpg, tpb](field_dev, pos_dev, boxsize_dev, out)
+    _read_cic_kernel[bpg, tpb](field_dev, pos_dev, boxsize_dev, out, bool(pbc))
     return out
 
 
 def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
-    """TSC interpolation of a vector field on the GPU (PBC only)."""
+    """TSC interpolation of a vector field on the GPU (periodic wrap or boundary clamp per ``pbc``)."""
     pos_dev = cp.asarray(pos, dtype=dtype)
     field_dev = cp.asarray(field, dtype=dtype)
     out = cp.empty((pos_dev.shape[0], 3), dtype=dtype)
     boxsize_dev = cp.asarray(np.broadcast_to(np.asarray(boxsize, dtype=np.float64), (3,)))
     tpb = 128
     bpg = (pos_dev.shape[0] + tpb - 1) // tpb
-    _read_tsc_kernel[bpg, tpb](field_dev, pos_dev, boxsize_dev, out)
+    _read_tsc_kernel[bpg, tpb](field_dev, pos_dev, boxsize_dev, out, bool(pbc))
     return out

@@ -156,6 +156,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   its own: unknown sections remain ignored, and that is the extension point.
 
 ### Fixed
+- The GPU CIC/TSC read-out of the displacement field (`field_ops/gpu.py`, used by
+  `FFTSolverGPU.read_displacement_at`) ignored `pbc` and **always wrapped**, so a
+  `device="gpu", pbc=False` reconstruction read Psi from the far face of the box
+  for tracers in the last cell of any axis: shifted positions there were off by
+  up to the local displacement (several Mpc/h) with respect to the CPU. The two
+  kernels now take `pbc` (wrap when true, clamp to the boundary cell when false)
+  and use `floor` for the CIC cell index, matching `field_ops/cpu.py`; the
+  same fix the 0.5.0 release applied to the `baorecon.mas` GPU kernels. CPU and
+  GPU reconstructions now agree at float32 precision for `pbc` true and false
+  (`tests/test_fft_solver.py::test_reconstruction_cpu_gpu_agree`).
 - The `[Cosmology]` check described a cosmology other than the one integrated.
   It required `om_radiation = 0`, on the grounds that a flat LCDM fixes it, and
   compared `om_vac` with `1 - om_matter`. But `FlatLambdaCDM` is built with
