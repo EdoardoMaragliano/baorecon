@@ -41,7 +41,7 @@ def _get_array_module(*arrays):
     return np
 
 
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def project_vector_field_jit(vector_field, los_versor, out):
     """Project ``vector_field`` onto ``los_versor`` at every mesh point.
 

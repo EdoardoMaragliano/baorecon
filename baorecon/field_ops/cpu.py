@@ -57,7 +57,7 @@ def divergence_finite_diff(vector_field: np.ndarray, cell_size: float) -> np.nda
             np.gradient(vector_field[..., 2], cell_size, axis=2))
 
 
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     """Trilinear CIC interpolation of a vector field at particle positions.
 
@@ -139,7 +139,7 @@ def tsc_weight(dx):
         return 0.0
 
 
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     """TSC interpolation of a vector field at particle positions.
 
@@ -389,7 +389,7 @@ def differentiate_potential_tsc_jit(
 ###########################
 ########## GRADIENT
 ###########################
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def gradient_periodic_jit(phi, displacement, dx, dy, dz):
     """Centered finite-difference gradient with periodic indices.
 

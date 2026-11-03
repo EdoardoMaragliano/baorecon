@@ -36,7 +36,7 @@ def ngp_assign(pos, boxsize, weights, density_grid, pbc=True):
     return density_grid
 
 
-@njit(parallel=False, fastmath=True)
+@njit(parallel=False, fastmath=True, cache=True)
 def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
     """Cloud-in-cell painting, single-threaded."""
     nx, ny, nz = density_grid.shape
@@ -76,7 +76,7 @@ def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
     return density_grid
 
 
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True):
     """Cloud-in-cell painting, multi-threaded via per-chunk private grids."""
     N = pos.shape[0]
@@ -148,7 +148,7 @@ def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
     return density_grid
 
 
-@njit(parallel=False, fastmath=True)
+@njit(parallel=False, fastmath=True, cache=True)
 def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
     """Triangular-shaped-cloud painting, single-threaded."""
     nx, ny, nz = density_grid.shape
@@ -184,7 +184,7 @@ def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
     return density_grid
 
 
-@njit(parallel=True, fastmath=True)
+@njit(parallel=True, fastmath=True, cache=True)
 def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True):
     """Triangular-shaped-cloud painting, multi-threaded via per-chunk grids."""
     N = pos.shape[0]
@@ -244,7 +244,7 @@ def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
 # ============================================================================
 # Grid -> particles (read-out, scalar field)
 # ============================================================================
-@njit(parallel=False, fastmath=True)
+@njit(parallel=False, fastmath=True, cache=True)
 def ngp_read(pos, grid, boxsize, out, pbc=True):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
@@ -261,7 +261,7 @@ def ngp_read(pos, grid, boxsize, out, pbc=True):
     return out
 
 
-@njit(parallel=False, fastmath=True)
+@njit(parallel=False, fastmath=True, cache=True)
 def cic_read(pos, grid, boxsize, out, pbc=True):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
@@ -293,7 +293,7 @@ def cic_read(pos, grid, boxsize, out, pbc=True):
     return out
 
 
-@njit(parallel=False, fastmath=True)
+@njit(parallel=False, fastmath=True, cache=True)
 def tsc_read(pos, grid, boxsize, out, pbc=True):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
