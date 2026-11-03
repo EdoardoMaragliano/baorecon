@@ -198,28 +198,11 @@ class _RawMultigrid:
         self._fmg_recursive(0, beta, los, v_cycles, n_smooth, damping)
         return fine.v.reshape(fine.shape)
 
-    def solve(self, input_density, beta=0.0, los=np.array([0., 0., 1.]),
-              n_cycles=15, n_smooth=5, damping=0.4):
-        fine = self.levels[0]
-        fine.f = input_density.ravel()
-        fine.v.fill(0.0)
-        logger.info(f"Starting V-Cycles (N={n_cycles}, Smooth={n_smooth}, Damp={damping})...")
-        for i in range(n_cycles):
-            self._v_cycle_recursive(0, beta, los, n_smooth, damping)
-            if i % 5 == 0:
-                residual_jit(fine.v, fine.f, fine.temp, fine.dims, fine.local_x, fine.offset_x,
-                             self.boxsize, self.boxcenter, beta, los, self.use_plane_parallel)
-                
-        return fine.v.reshape(fine.shape)
-
     def _v_cycle_recursive(self, lvl_idx, beta, los, n_smooth, damping):
         curr = self.levels[lvl_idx]
         is_bottom = (lvl_idx == self.num_levels - 1)
         sm = self._bottom_smoother if is_bottom else self.smoother
 
-        #for _ in range(n_smooth):
-        #    jacobi_jit(curr.v, curr.f, curr.temp, curr.dims, curr.local_x, curr.offset_x,
-        #               self.boxsize, self.boxcenter, beta, damping, los, self.use_plane_parallel)
         for _ in range(n_smooth):
             self._smooth(curr, beta, los, damping, sm)
 

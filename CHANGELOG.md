@@ -17,6 +17,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   multigrid builds only the potential, the FFT solvers only the displacement.
   Results are unchanged.
 
+### Removed
+- `_RawMultigrid.solve` (plain V-cycles with a residual computed every fifth
+  cycle and discarded): unused by the package, which solves through
+  `solve_fmg`. The V-cycle convergence tests drive `_v_cycle_recursive`
+  directly.
+
 ## [0.8.1] - 2026-11-03
 
 ### Added

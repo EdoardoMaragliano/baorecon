@@ -52,6 +52,20 @@ def _residual_wrapper(v_3d, f_3d, boxsize_val=1.0):
     return res_out.reshape((N, N, N))
 
 
+def _run_v_cycles(solver, source, n_cycles, n_smooth=2, damping=0.4, beta=0.0,
+                  los=np.array([0.0, 0.0, 1.0])):
+    """Plain V-cycles from a zero initial guess (what ``_RawMultigrid.solve`` used to
+    do before it was removed; production only uses ``solve_fmg``). Kept here because
+    the V-cycle is the building block of FMG and its convergence factor is worth
+    testing on its own."""
+    fine = solver.levels[0]
+    fine.f = source.ravel()
+    fine.v.fill(0.0)
+    for _ in range(n_cycles):
+        solver._v_cycle_recursive(0, beta, los, n_smooth, damping)
+    return fine.v.reshape(fine.shape)
+
+
 def test_prolong_constant_field():
     """Test the prolong method on a constant field.
     
@@ -240,7 +254,7 @@ def test_fmg_vs_fft_and_vcycle():
 
     solver = MultigridSolver(N_fine=N, boxsize=L, boxcenter=boxcenter, use_plane_parallel=True)
 
-    v_vcycle = solver.solve(source, beta=0.0, n_cycles=10, n_smooth=2, damping=0.4)
+    v_vcycle = _run_v_cycles(solver, source, n_cycles=10, n_smooth=2, damping=0.4)
     v_fmg = solver.solve_fmg(source, beta=0.0, v_cycles=2, n_smooth=2, damping=0.4)
 
     # compare shapes and finite
@@ -290,7 +304,7 @@ def test_vcycle_convergence_rate():
     max_cycles = 5
     for n_cyc in range(1, max_cycles + 1):
         # solve using n_cyc cycles
-        v_k = solver.solve(source, beta=0.0, n_cycles=n_cyc, n_smooth=2, damping=0.4)
+        v_k = _run_v_cycles(solver, source, n_cycles=n_cyc, n_smooth=2, damping=0.4)
         
         # Compute the residual r = f - A*v
         r_k = _residual_wrapper(v_k, source, boxsize_val=L)
