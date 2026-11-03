@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-11-03
+
 ### Added
 - A template-driven FITS writer. `CatalogBackend.write` takes `template`, `hdu`
   and `strict`; given a template the FITS backend builds the output against that
@@ -140,8 +142,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   do not pick the same solver unless one of them says so). `n_iterations` moves to
   `**kwargs`, where it now works; the signature had promoted a solver-specific
   option above the choice of solver itself.
-
-### Changed
 - `[Recon]` now rejects a key nothing reads, naming it and listing the known
   ones. Everywhere else the INI loader still steps over what it does not
   recognise, and deliberately: reconstruction and the 2PCF keep separate
@@ -154,6 +154,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   decision already taken for `BAOReconstructor`'s keyword arguments, now applied
   to the parameter file. A code layered on top puts its settings in a section of
   its own: unknown sections remain ignored, and that is the extension point.
+
+- `BAOReconstructor` reads Psi at the box-frame positions the `DensityManager`
+  already holds instead of re-running `survey_to_box_frame` on the survey-frame
+  catalogues (one (N, 3) pass and one temporary copy less per catalogue; output
+  bit-identical).
+- The RSD term and the tracer shift are fused into one parallel numba kernel,
+  `field_ops.shifted_positions_rsd` (`pos - (psi + f (psi . n) n)`, radial or
+  fixed line of sight, `f = 0` in real space). The previous path (norm, unit LOS,
+  `project_vector_field`, two more numpy passes) was single-threaded and held
+  ~6 (N, 3) temporaries: at 10M tracers it goes from 1.6 s to 20 ms and the
+  transient peak from 6 to 2 arrays. `interpolate_displacement` and
+  `get_rsd_displacement` are unchanged and remain the public two-step API; the
+  fused result agrees with them to rounding (1 ulp).
 
 ### Fixed
 - The GPU CIC/TSC read-out of the displacement field (`field_ops/gpu.py`, used by
@@ -391,7 +404,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   reused a previous pipeline allocation.
 - `resolve_format` now raises clear errors for an unknown format or extension.
 
-[Unreleased]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.6.0...HEAD
+[Unreleased]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.8.1...HEAD
+[0.8.1]: https://github.com/EdoardoMaragliano/baorecon/compare/v0.7.0...v0.8.1
+[0.7.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.7.0
 [0.6.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.6.0
 [0.5.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.5.0
 [0.4.0]: https://github.com/EdoardoMaragliano/baorecon/releases/tag/v0.4.0
