@@ -5,3 +5,4 @@ figures/*
 !results/.gitkeep
 !figures/.gitkeep
 *.sh
+slurm/*.out
