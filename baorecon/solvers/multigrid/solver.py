@@ -297,7 +297,10 @@ class MultigridSolver(PoissonSolver):
             damping=self._kwargs.get("damping", 0.4),
         )
         self._raw = None
-        self._potential = np.divide(potential, self.bias)
+        # In place: `potential` is the fine-level solution array, which nothing else
+        # references once the hierarchy is dropped, so there is no need for a copy.
+        np.divide(potential, self.bias, out=potential)
+        self._potential = potential
 
     def _compute_displacement_mesh(self) -> None:
         """Displacement on mesh from the potential on mesh via centered periodic finite differences."""
