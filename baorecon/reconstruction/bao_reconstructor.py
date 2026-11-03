@@ -414,8 +414,11 @@ class BAOReconstructor:
         logger.info(f"Reconstruction type: {self._rectype}, RSD space: {self._RSDspace}")
         self.print_info()
 
-        #logger.info("Solving for displacement field...")
-        if self.solver == 'multigrid':
+        # Trigger the solve explicitly so that it is logged here and not inside the
+        # first read-out. The multigrid read-out differentiates the potential at the
+        # tracer positions, so only phi is needed; the FFT solvers read Psi from the
+        # (nx, ny, nz, 3) displacement mesh.
+        if self._solver_type == "multigrid":
             _ = self.solver.potential
         else:
             _ = self.solver.displacement

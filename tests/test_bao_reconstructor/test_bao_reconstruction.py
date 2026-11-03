@@ -173,3 +173,25 @@ def test_run_reconstruction_matches_public_displacement_api(los, rsd_space):
         if rsd_space == "RedshiftSpace":
             psi = psi + recon.get_rsd_displacement(psi, pos)
         np.testing.assert_allclose(rec, pos - psi, rtol=0, atol=1e-9)
+
+
+@pytest.mark.parametrize("solver_type, expect_potential, expect_displacement",
+                         [("multigrid", True, False), ("ifft", False, True)])
+def test_run_reconstruction_only_builds_the_mesh_its_readout_needs(solver_type, expect_potential,
+                                                                   expect_displacement):
+    """Multigrid differentiates phi at the tracers, so run_reconstruction must build phi
+    and not the (nx, ny, nz, 3) displacement mesh (3x phi in memory, never read); the FFT
+    solvers compute Psi directly and only build phi on demand. Regression for the
+    ``self.solver == 'multigrid'`` comparison that was always False."""
+    rng = np.random.default_rng(42)
+    boxsize = 100.0
+    data_pos = rng.uniform(0, boxsize, size=(200, 3))
+    random_pos = rng.uniform(0, boxsize, size=(600, 3))
+
+    recon = BAOReconstructor(data_pos=data_pos, random_pos=random_pos, boxsize=boxsize,
+                             nmesh=16, boxcentre=np.array([boxsize / 2] * 3), f=0.88, bias=1.7,
+                             threshold_randoms=0.01, solver_type=solver_type)
+    recon.run_reconstruction()
+
+    assert (recon.solver._potential is not None) == expect_potential
+    assert (recon.solver._displacement is not None) == expect_displacement

@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- `BAOReconstructor.run_reconstruction` compared the solver *object* with the
+  string `'multigrid'`, so the branch meant for the multigrid solver never ran
+  and every multigrid reconstruction also built the `(nx, ny, nz, 3)`
+  displacement mesh -- three times the potential in memory (12.9 GB at
+  1024^3), never read, since the multigrid read-out differentiates the
+  potential at the tracer positions. The check now uses the solver type;
+  multigrid builds only the potential, the FFT solvers only the displacement.
+  Results are unchanged.
+
 ## [0.8.1] - 2026-11-03
 
 ### Added
