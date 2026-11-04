@@ -12,6 +12,7 @@ import numpy as np
 from baorecon.field_ops import smoothed_field
 from baorecon.mas import assign
 from baorecon.mesh.mesh import Mesh
+from baorecon.utils.reductions import position_bounds
 from baorecon.utils.formatters import (
     format_boxcentre,
     format_boxsize,
@@ -108,7 +109,8 @@ class DensityManager:
                     "cellsize is mutually exclusive with nmesh and boxsize; "
                     "provide either cellsize, or nmesh (+optional boxsize)."
                 )
-            extent = (self._raw_random_pos.max(axis=0) - self._raw_random_pos.min(axis=0)) + self.padding
+            low, high = position_bounds(self._raw_random_pos)
+            extent = (high - low) + self.padding
             self.nmesh, self.boxsize = nmesh_boxsize_from_cellsize(extent, self.cellsize, dtype=self.dtype)
             logger.info(f"cellsize={self.cellsize} -> nmesh={self.nmesh}, boxsize={self.boxsize}.")
         else:

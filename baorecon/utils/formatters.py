@@ -1,5 +1,6 @@
 import numpy as np
 from baorecon.utils.loggers import setup_logger
+from baorecon.utils.reductions import position_bounds
 logger = setup_logger(__name__)
 
 def _check_weights(weights):
@@ -351,7 +352,8 @@ def check_boxsize(box_size: np.ndarray, positions: np.ndarray) -> bool:
     -------
     bool : True if box size is sufficient, False otherwise.
     """
-    max_sep = positions.max(axis=0) - positions.min(axis=0)
+    low, high = position_bounds(positions)
+    max_sep = high - low
 
     #check boxsize
     if (np.asarray(box_size) <= max_sep).any():
@@ -422,7 +424,8 @@ def set_boxsize_from_positions(positions: np.ndarray, padding: float, dtype=np.f
     np.ndarray
         The computed per-axis box size, shape (3,).
     """
-    max_sep = positions.max(axis=0) - positions.min(axis=0)
+    low, high = position_bounds(positions)
+    max_sep = high - low
     box_size = (max_sep + padding).astype(dtype)
     logger.info(
         f"Setting box size to {np.array2string(box_size, precision=4, separator=', ')} "
@@ -446,8 +449,7 @@ def set_boxcentre_from_positions(positions: np.ndarray, dtype=np.float32) -> np.
     np.ndarray
         The computed box centre.
     """
-    min_corner = positions.min(axis=0)
-    max_corner = positions.max(axis=0)
+    min_corner, max_corner = position_bounds(positions)
     boxcentre = 0.5 * (min_corner + max_corner)
     logger.info(f"Setting box centre to {boxcentre} from position range")
     return np.asarray(boxcentre, dtype=dtype)
@@ -485,11 +487,12 @@ def survey_to_box_frame(positions: np.ndarray, min_corner: np.ndarray, boxsize: 
     if pbc:
         np.mod(pos_shifted, boxsize, out=pos_shifted)
     else:
-        # validate bounds
-        if pos_shifted.min() < 0 or (pos_shifted.max(axis=0) > boxsize).any():
+        # validate bounds: six numbers from one pass, no boolean masks
+        low, high = position_bounds(pos_shifted)
+        if low.min() < 0 or (high > boxsize).any():
             raise ValueError(
                 f"Positions in box frame must be inside [0, boxsize] when pbc=False. "
-                f"Got min {pos_shifted.min()}, max {pos_shifted.max()}, boxsize {boxsize}."
+                f"Got min {low.min()}, max {high.max()}, boxsize {boxsize}."
             )
     return pos_shifted
 

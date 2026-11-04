@@ -6,6 +6,7 @@ its documented formula / inverse relationship.
 """
 
 import numpy as np
+import pytest
 
 from baorecon.utils.utils import (
     delta_to_rho,
@@ -117,3 +118,38 @@ def test_euclidean_distance_periodic_mesh_matches_periodic_distance():
     pos2 = np.array([[i2, j2, k2]], dtype=np.float64) * cell_size
     d_ref = periodic_distance(pos1, pos2, boxsize)[0]
     assert np.isclose(d_mesh, d_ref)
+
+
+# ---------------------------------------------------------------------------
+# position_bounds: numpy's axis-0 min/max, in one parallel pass
+# ---------------------------------------------------------------------------
+
+def test_position_bounds_matches_numpy_in_every_dtype():
+    import numba
+    from baorecon.utils.reductions import position_bounds
+
+    rng = np.random.default_rng(9)
+    for dtype in (np.float32, np.float64):
+        pos = rng.uniform(-50.0, 2500.0, (100_003, 3)).astype(dtype)
+        pos[777] = [-1234.5, 9.0, 7.0]                  # extremes off the diagonal
+        pos[-1] = [1.0, 9999.25, -3.0]
+        low, high = position_bounds(pos)
+        assert low.dtype == dtype and high.dtype == dtype
+        np.testing.assert_array_equal(low, pos.min(axis=0))
+        np.testing.assert_array_equal(high, pos.max(axis=0))
+        before = numba.get_num_threads()
+        try:
+            numba.set_num_threads(1)
+            again = position_bounds(pos)
+        finally:
+            numba.set_num_threads(before)
+        np.testing.assert_array_equal(again[0], low)
+        np.testing.assert_array_equal(again[1], high)
+    # Few rows, fewer than the chunks: still right.
+    tiny = np.array([[3.0, 2.0, 1.0], [0.0, 5.0, -1.0]])
+    np.testing.assert_array_equal(position_bounds(tiny)[0], [0.0, 2.0, -1.0])
+    np.testing.assert_array_equal(position_bounds(tiny)[1], [3.0, 5.0, 1.0])
+    with pytest.raises(ValueError, match="empty"):
+        position_bounds(np.empty((0, 3)))
+    with pytest.raises(ValueError, match="shape"):
+        position_bounds(np.ones((4, 2)))

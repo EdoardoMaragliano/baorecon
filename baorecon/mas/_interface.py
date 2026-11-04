@@ -38,12 +38,17 @@ def _validate_positions(pos, weights, boxsize, pbc):
         raise ValueError("pos must have shape (N, 3)")
     if pos.shape[0] != weights.shape[0]:
         raise ValueError("pos and weights must have the same number of particles")
-    if (pos < 0).any() or (pos > boxsize).any():
+    # One parallel pass for the six extremes, instead of two boolean (N, 3)
+    # masks the size of the catalogue.
+    from baorecon.utils.reductions import position_bounds
+
+    low, high = position_bounds(pos)
+    if (low < 0).any() or (high > boxsize).any():
         if pbc:
             warnings.warn("Particles are outside the range [0, boxsize]. PBC is true and will be applied.")
         else:
             raise ValueError(
-                f"pos must be in the range [0, boxsize]. Got min {pos.min()} and max {pos.max()}."
+                f"pos must be in the range [0, boxsize]. Got min {low.min()} and max {high.max()}."
             )
 
 
