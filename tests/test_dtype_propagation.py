@@ -96,6 +96,28 @@ def test_density_manager_dtype_propagation(dtype):
     assert dm.delta_on_mesh.dtype == dtype
 
 
+def test_weights_are_never_promoted_and_change_nothing():
+    """A float32 weight column under a float64 mesh is kept as it is -- the
+    kernel promotes each weight exactly as it reads it -- so the density is
+    the same to the bit as with the column cast up beforehand; a float64
+    column under a float32 mesh is cast down, as the positions are."""
+    data, rand = _catalogues(seed=3)
+    w32 = np.linspace(0.5, 1.5, len(data), dtype=np.float32)
+    assert F.format_weights(w32, len(data), dtype=np.float64) is w32
+    assert F.format_weights(w32.astype(np.float64), len(data), dtype=np.float32).dtype \
+        == np.float32
+    assert F.format_weights(None, len(data), dtype=np.float64).dtype == np.float64
+
+    def delta(weights):
+        dm = DensityManager(data_pos=data, random_pos=rand, nmesh=16, boxsize=100.0,
+                            boxcentre=[50, 50, 50], dtype=np.float64, data_weights=weights)
+        return dm.data_weights.dtype, dm.delta_on_mesh
+    dtype32, with32 = delta(w32)
+    dtype64, with64 = delta(w32.astype(np.float64))
+    assert dtype32 == np.float32 and dtype64 == np.float64
+    np.testing.assert_array_equal(with32, with64)
+
+
 @pytest.mark.parametrize("dtype", DTYPES)
 def test_density_manager_dtype_from_cellsize(dtype):
     data, rand = _catalogues(seed=2)

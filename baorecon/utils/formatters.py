@@ -8,10 +8,28 @@ def _check_weights(weights):
     if weights.min() < 0:
         raise ValueError("weights must be non-negative")
 
+def weights_in(weights, dtype=np.float32) -> np.ndarray:
+    """Weights at no more than the working precision ``dtype``, never more.
+
+    A weight is read once per particle, in the mass assignment, where it is
+    multiplied into the mesh's precision; promoting it there is exact, so
+    holding a float32 column as float64 buys nothing but a copy the size of
+    the catalogue. Hence: a float column narrower than or equal to ``dtype``
+    is returned as it is, by reference; a wider one, or a non-float one, is
+    cast down to ``dtype``.
+    """
+    arr = np.asarray(weights)
+    dtype = np.dtype(dtype)
+    if arr.dtype.kind != "f" or arr.dtype.itemsize > dtype.itemsize:
+        return arr.astype(dtype)
+    return arr
+
+
 def format_weights(weights, size, dtype=np.float32) -> np.ndarray:
     """
     Format weights array. If weights is None, create an array of ones of given size.
-    Format the weights to the specified dtype.
+    Weights given are kept at or below ``dtype`` (:func:`weights_in`): never
+    promoted, cast down when wider.
 
     Parameters
     ----------
@@ -32,11 +50,10 @@ def format_weights(weights, size, dtype=np.float32) -> np.ndarray:
     """
     if weights is None:
         logger.debug("weights is None, creating an array of ones")
-        weights = np.ones(size, dtype=dtype)
-    else:
-        _check_weights(weights)
-
-    return np.asarray(weights, dtype=dtype)
+        return np.ones(size, dtype=dtype)
+    weights = weights_in(weights, dtype)
+    _check_weights(weights)
+    return weights
 
 def format_positions(positions, dtype=np.float32) -> np.ndarray:
     """

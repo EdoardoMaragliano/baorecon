@@ -60,13 +60,17 @@ def assign(pos, weights, mesh, scheme="CIC", device="cpu", pbc=True, parallel=Fa
 
     # GPU kernels are float32-only; on the CPU we stay type-neutral and follow
     # the mesh's working precision so a float64 mesh is not silently downcast.
+    # Weights are never promoted: a float32 column stays float32 under a
+    # float64 mesh, the kernel promotes each one exactly as it reads it.
+    from baorecon.utils.formatters import weights_in
+
     work_dtype = np.dtype(np.float32) if device == "gpu" else np.dtype(mesh.dtype)
 
     pos = np.asarray(pos, dtype=work_dtype)
     if weights is None:
         weights = np.ones(pos.shape[0], dtype=work_dtype)
     else:
-        weights = np.asarray(weights, dtype=work_dtype)
+        weights = weights_in(weights, work_dtype)
 
     boxsize = np.asarray(mesh.boxsize, dtype=work_dtype)
     _validate_positions(pos, weights, boxsize, pbc)
