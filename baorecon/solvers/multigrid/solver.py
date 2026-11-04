@@ -168,9 +168,7 @@ class _RawMultigrid:
 
     def _format_boxsize(self, boxsize):
         if isinstance(boxsize, (float, int)):
-            boxsize = np.float32(boxsize)
-            boxsize = np.array([boxsize, boxsize, boxsize], dtype=self._dtype)
-            return boxsize
+            return np.array([boxsize, boxsize, boxsize], dtype=self._dtype)
         elif isinstance(boxsize, np.ndarray):
             if boxsize.shape == (3,):
                 boxsize = boxsize.astype(self._dtype)
@@ -308,9 +306,8 @@ class MultigridSolver(PoissonSolver):
         box = np.asarray(self.mesh.boxsize, dtype=self._dtype)
 
         phi = self.potential.reshape(tuple(int(n) for n in nmesh))
-        dx = box[0] / np.float32(nmesh[0])
-        dy = box[1] / np.float32(nmesh[1])
-        dz = box[2] / np.float32(nmesh[2])
+        cell = (box / nmesh).astype(self._dtype)      # the working precision, not float32
+        dx, dy, dz = cell[0], cell[1], cell[2]
 
         displacement = np.empty(tuple(int(n) for n in nmesh) + (3,), dtype=phi.dtype)
         gradient_periodic_jit(phi, displacement, dx, dy, dz)

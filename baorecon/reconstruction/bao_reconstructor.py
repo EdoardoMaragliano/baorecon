@@ -222,7 +222,8 @@ class BAOReconstructor:
                     bias=self._bias,
                     RSDspace=self._RSDspace,
                     use_plane_parallel=self._los is not None,
-                    smoother = smoother,
+                    smoother=smoother,
+                    dtype=self._dtype,
                 )
         return self._solver
 

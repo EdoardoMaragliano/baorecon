@@ -146,6 +146,24 @@ def test_bao_reconstructor_dtype_attributes(dtype):
     assert recon.delta_on_mesh.dtype == dtype
 
 
+@pytest.mark.parametrize("dtype", DTYPES)
+def test_multigrid_potential_follows_the_working_precision(dtype):
+    """The multigrid solver used to be built at its own default, float32,
+    whatever the reconstructor's dtype: a float64 run solved in single
+    precision, and its products carried float32 rounding. The potential, the
+    displacement and the shifted positions are all at ``dtype`` now."""
+    data, rand = _catalogues(seed=5)
+    recon = BAOReconstructor(
+        data_pos=data, random_pos=rand, nmesh=16, boxsize=100.0,
+        boxcentre=[50, 50, 50], f=0.8, bias=2.0, dtype=dtype, R_sm=10.0,
+        solver_type="multigrid", pbc=False,
+    )
+    shifted_data, shifted_rand = recon.run_reconstruction()
+    assert recon.solver.potential.dtype == dtype
+    assert recon.solver.displacement.dtype == dtype
+    assert shifted_data.dtype == dtype and shifted_rand.dtype == dtype
+
+
 def test_bao_reconstructor_downcasts_float64_by_default():
     """float64 catalogues are downcast to float32 unless double precision is asked."""
     data, rand = _catalogues(seed=4)

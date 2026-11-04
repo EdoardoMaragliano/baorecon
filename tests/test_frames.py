@@ -379,6 +379,36 @@ def test_rejects_empty_and_malformed_input():
         ConeFrame.from_direction(np.zeros(3))
 
 
+def test_direction_sums_do_not_depend_on_the_thread_count():
+    """The same bits on one thread and on many: the reduction is chunked in a
+    fixed way and added up in a fixed order, so a run is reproducible."""
+    import numba
+    from baorecon.utils.frames import (_direction_sum_from_angles,
+                                       _direction_sum_from_positions)
+
+    rng = np.random.default_rng(5)
+    n = 300_007
+    ra = rng.uniform(100.0, 260.0, n)
+    dec = rng.uniform(-40.0, 40.0, n)
+    pos = unit_vectors(ra, dec) * rng.uniform(1000.0, 3000.0, n)[:, None]
+    before = numba.get_num_threads()
+    try:
+        out = {}
+        for threads in (1, min(4, numba.config.NUMBA_NUM_THREADS)):
+            numba.set_num_threads(threads)
+            out[threads] = (_direction_sum_from_angles(ra, dec),
+                            _direction_sum_from_positions(pos),
+                            _direction_sum_from_positions(pos.astype(np.float32)))
+    finally:
+        numba.set_num_threads(before)
+    first, *others = out.values()
+    for other in others:
+        assert other == first                       # tuple of floats: bit for bit
+    # Still the float64 reference, to rounding.
+    expected = unit_vectors(ra, dec).sum(axis=0)
+    np.testing.assert_allclose(first[0], expected, rtol=1e-12)
+
+
 def test_rejects_a_vanishing_direction_sum():
     """Antipodal pairs have no mean line of sight; better to say so than to guess."""
     pos = np.array([[1.0, 0.0, 0.0], [-1.0, 0.0, 0.0]])

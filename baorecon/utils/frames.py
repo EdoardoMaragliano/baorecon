@@ -70,39 +70,80 @@ __all__ = ["ConeFrame"]
 # ============================================================================
 # The direction kernels accumulate in float64 whatever the input dtype: see the
 # module docstring for why this is load-bearing rather than defensive.
+#
+# They are also deterministic. A ``prange`` reduction adds the threads' partial
+# sums in whatever order the threads finish, so two runs of the same catalogue
+# differ in the last bit of the axis -- 1e-16, harmless in itself, but the
+# rotated positions then differ, and whatever downstream rounds (a float32
+# solver, a pixel boundary) turns that into a difference one can see. So the
+# catalogue is cut into a fixed number of chunks, each summed serially, and
+# the chunk sums are added in a fixed order: the same bits on any number of
+# threads.
+_SUM_CHUNKS = 1024
+
 
 @njit(parallel=True, fastmath=True, cache=True)
 def _direction_sum_from_positions(positions):
     """Sum of the per-object unit vectors of ``positions``, in float64."""
+    n = positions.shape[0]
+    chunks = min(_SUM_CHUNKS, max(n, 1))
+    step = (n + chunks - 1) // chunks
+    partial = np.zeros((chunks, 3))
+    for c in prange(chunks):
+        sx = 0.0
+        sy = 0.0
+        sz = 0.0
+        for i in range(c * step, min(n, (c + 1) * step)):
+            x = np.float64(positions[i, 0])
+            y = np.float64(positions[i, 1])
+            z = np.float64(positions[i, 2])
+            r = np.sqrt(x * x + y * y + z * z)
+            if r > 0.0:
+                sx += x / r
+                sy += y / r
+                sz += z / r
+        partial[c, 0] = sx
+        partial[c, 1] = sy
+        partial[c, 2] = sz
     sx = 0.0
     sy = 0.0
     sz = 0.0
-    for i in prange(positions.shape[0]):
-        x = np.float64(positions[i, 0])
-        y = np.float64(positions[i, 1])
-        z = np.float64(positions[i, 2])
-        r = np.sqrt(x * x + y * y + z * z)
-        if r > 0.0:
-            sx += x / r
-            sy += y / r
-            sz += z / r
+    for c in range(chunks):
+        sx += partial[c, 0]
+        sy += partial[c, 1]
+        sz += partial[c, 2]
     return sx, sy, sz
 
 
 @njit(parallel=True, fastmath=True, cache=True)
 def _direction_sum_from_angles(ra_deg, dec_deg):
     """Sum of the unit vectors of the (RA, DEC) directions, in float64."""
+    n = ra_deg.shape[0]
+    chunks = min(_SUM_CHUNKS, max(n, 1))
+    step = (n + chunks - 1) // chunks
+    partial = np.zeros((chunks, 3))
+    d2r = np.pi / 180.0
+    for c in prange(chunks):
+        sx = 0.0
+        sy = 0.0
+        sz = 0.0
+        for i in range(c * step, min(n, (c + 1) * step)):
+            ra = np.float64(ra_deg[i]) * d2r
+            dec = np.float64(dec_deg[i]) * d2r
+            cos_dec = np.cos(dec)
+            sx += cos_dec * np.cos(ra)
+            sy += cos_dec * np.sin(ra)
+            sz += np.sin(dec)
+        partial[c, 0] = sx
+        partial[c, 1] = sy
+        partial[c, 2] = sz
     sx = 0.0
     sy = 0.0
     sz = 0.0
-    d2r = np.pi / 180.0
-    for i in prange(ra_deg.shape[0]):
-        ra = np.float64(ra_deg[i]) * d2r
-        dec = np.float64(dec_deg[i]) * d2r
-        cos_dec = np.cos(dec)
-        sx += cos_dec * np.cos(ra)
-        sy += cos_dec * np.sin(ra)
-        sz += np.sin(dec)
+    for c in range(chunks):
+        sx += partial[c, 0]
+        sy += partial[c, 1]
+        sz += partial[c, 2]
     return sx, sy, sz
 
 
