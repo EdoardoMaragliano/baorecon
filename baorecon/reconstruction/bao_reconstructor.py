@@ -16,7 +16,7 @@ from baorecon.mesh.mesh import Mesh
 from baorecon.reconstruction.density import DensityManager
 from baorecon.solvers.fft import FFTSolverCPU, FFTSolverGPU
 from baorecon.solvers.multigrid import MultigridSolver
-from baorecon.utils.formatters import format_positions, format_rectype, format_rsd_space, survey_to_box_frame
+from baorecon.utils.formatters import format_positions, format_rectype, format_rsd_space
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
@@ -224,6 +224,7 @@ class BAOReconstructor:
                     use_plane_parallel=self._los is not None,
                     smoother=smoother,
                     dtype=self._dtype,
+                    pbc=self._pbc,
                 )
         return self._solver
 
@@ -311,25 +312,20 @@ class BAOReconstructor:
         positions : np.ndarray
             Tracer positions, shape ``(N, 3)``.
         survey_frame : bool, default True
-            If True the positions are in the survey frame and are mapped to the
-            box frame before the read-out; if False they are already box-frame.
+            If True the positions are in the survey frame and the read-out
+            kernel maps each one to the box frame as it reads it (no box-frame
+            copy is built); if False they are already box-frame.
 
         Returns
         -------
         np.ndarray
             The displacement ``Psi(positions)``, shape ``(N, 3)``.
         """
-        if survey_frame:
-            pos_for_interp = survey_to_box_frame(positions, self._density_manager.min_corner,
-                                                 self._boxsize, pbc=self._pbc, dtype=self._dtype)
-        else:
-            pos_for_interp = positions
-
         # Every solver reads the displacement out through the same interface and
         # returns a host (N, 3) array; the FFT/multigrid difference (interpolate a
         # spectral Psi grid vs. differentiate the potential on the fly) is hidden
         # behind read_displacement_at.
-        return self.solver.read_displacement_at(pos_for_interp, mas=self.MAS)
+        return self.solver.read_displacement_at(positions, mas=self.MAS, survey_frame=survey_frame)
 
     def get_rsd_displacement(self, tracer_psi: np.ndarray, tracer_pos: np.ndarray) -> np.ndarray:
         """Redshift-space distortion (RSD) contribution to the displacement.
@@ -392,12 +388,11 @@ class BAOReconstructor:
         return shifted_positions_rsd(tracer_pos, tracer_psi, f, radial, los, out)
 
     def _shift_gals(self) -> np.ndarray:
-        # Psi is read at the box-frame positions the DensityManager already
-        # holds (no second survey_to_box_frame); the shift itself happens in
-        # the survey frame.
+        # Psi is read straight at the survey-frame positions (the kernel moves
+        # them to the box frame as it reads them); the shift itself happens in
+        # the survey frame too.
         logger.info(f"Computing displacement for galaxies ({self._RSDspace})...")
-        tracer_psi = self.interpolate_displacement(self._density_manager.data_pos_box,
-                                                   survey_frame=False)
+        tracer_psi = self.interpolate_displacement(self.data_pos, survey_frame=True)
         return self._shifted_positions(tracer_psi, self.data_pos,
                                        with_rsd=self._RSDspace == "RedshiftSpace")
 
@@ -405,8 +400,7 @@ class BAOReconstructor:
         # rec-sym moves the randoms like the galaxies; rec-iso leaves out the
         # RSD term so the randoms are shifted in real space only.
         logger.info(f"Computing displacement for randoms ({self._rectype}, {self._RSDspace})...")
-        tracer_psi = self.interpolate_displacement(self._density_manager.random_pos_box,
-                                                   survey_frame=False)
+        tracer_psi = self.interpolate_displacement(self.random_pos, survey_frame=True)
         with_rsd = self._rectype == "rec-sym" and self._RSDspace == "RedshiftSpace"
         return self._shifted_positions(tracer_psi, self.random_pos, with_rsd=with_rsd)
 

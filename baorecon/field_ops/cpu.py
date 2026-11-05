@@ -10,6 +10,9 @@ import numpy as np
 import scipy.fft as sfft
 from numba import njit, prange
 
+from baorecon.utils.numba_flags import FASTMATH
+
+
 
 def divergence_FFT(vector_field: np.ndarray, k_components) -> np.ndarray:
     """Divergence of a vector field via the (real) FFT, on the CPU.
@@ -57,8 +60,8 @@ def divergence_finite_diff(vector_field: np.ndarray, cell_size: float) -> np.nda
             np.gradient(vector_field[..., 2], cell_size, axis=2))
 
 
-@njit(parallel=True, fastmath=True, cache=True)
-def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
+def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32, origin=None):
     """Trilinear CIC interpolation of a vector field at particle positions.
 
     ``boxsize`` is a length-3 array giving the per-axis box size, and the grid
@@ -66,6 +69,11 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     share one code path. Taking a single mesh size from axis 0 would mis-size the
     cells on the other two and index the wrong nodes -- and where axis 0 is the
     longest, clamp past the end of a shorter axis.
+
+    ``origin`` moves survey-frame positions to the box frame as they are read,
+    and ``pbc`` wraps the coordinate and the stencil, as in
+    :mod:`baorecon.mas.cpu`; ``origin=None`` means ``pos`` is already in the
+    box frame.
     """
     N = pos.shape[0]
     nx = field.shape[0]
@@ -77,9 +85,21 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     csz = boxsize[2] / nz
 
     for idx in prange(N):
-        fx = pos[idx, 0] / csx
-        fy = pos[idx, 1] / csy
-        fz = pos[idx, 2] / csz
+        x0 = pos[idx, 0]
+        x1 = pos[idx, 1]
+        x2 = pos[idx, 2]
+        if origin is not None:
+            # Survey -> box frame on the fly (see baorecon.mas.cpu).
+            x0 = x0 - origin[0]
+            x1 = x1 - origin[1]
+            x2 = x2 - origin[2]
+        if pbc:
+            x0 = x0 % boxsize[0]
+            x1 = x1 % boxsize[1]
+            x2 = x2 % boxsize[2]
+        fx = x0 / csx
+        fy = x1 / csy
+        fz = x2 / csz
 
         i0 = int(fx)
         j0 = int(fy)
@@ -139,11 +159,11 @@ def tsc_weight(dx):
         return 0.0
 
 
-@njit(parallel=True, fastmath=True, cache=True)
-def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
+def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32, origin=None):
     """TSC interpolation of a vector field at particle positions.
 
-    Per-axis grid size, as in :func:`interpolate_cic_vector`.
+    Per-axis grid size, ``origin`` and ``pbc``, as in :func:`interpolate_cic_vector`.
     """
     N = pos.shape[0]
     nx = field.shape[0]
@@ -155,9 +175,21 @@ def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     csz = boxsize[2] / nz
 
     for idx in prange(N):
-        fx = pos[idx, 0] / csx
-        fy = pos[idx, 1] / csy
-        fz = pos[idx, 2] / csz
+        x0 = pos[idx, 0]
+        x1 = pos[idx, 1]
+        x2 = pos[idx, 2]
+        if origin is not None:
+            # Survey -> box frame on the fly (see baorecon.mas.cpu).
+            x0 = x0 - origin[0]
+            x1 = x1 - origin[1]
+            x2 = x2 - origin[2]
+        if pbc:
+            x0 = x0 % boxsize[0]
+            x1 = x1 % boxsize[1]
+            x2 = x2 % boxsize[2]
+        fx = x0 / csx
+        fy = x1 / csy
+        fz = x2 / csz
 
         i0 = int(np.floor(fx + 0.5))
         j0 = int(np.floor(fy + 0.5))
@@ -204,18 +236,24 @@ def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
 #### interpolate potential at particle positions    ####
 ########################################################
 
-@njit(fastmath=True, parallel=True, cache=True, nogil=True)
+@njit(fastmath=FASTMATH, parallel=True, cache=True, nogil=True)
 def differentiate_potential_jit_cic(
                 mesh: np.ndarray, 
                 positions: np.ndarray, 
                 shifts: np.ndarray, 
                 nmesh_dims: np.ndarray, 
                 offset_x: int, 
-                boxsize: np.ndarray
+                boxsize: np.ndarray,
+                origin=None,
+                pbc=False,
                 ) -> None:
     """
     Interpolates the gravitational potential 'mesh' at particle 'positions' using the Cloud-In-Cell (CIC) scheme.
     Calculates displacement vectors at particle positions and writes the results directly into the 'shifts' buffer.
+    ``origin`` moves survey-frame positions to the box frame as they are read
+    (see :mod:`baorecon.mas.cpu`); ``origin=None`` means box frame. ``pbc``
+    wraps the coordinate into the box; the stencil indices are always
+    periodic here, as the multigrid potential is.
     """
     
     nx = int(nmesh_dims[0])
@@ -234,10 +272,21 @@ def differentiate_potential_jit_cic(
     norm_z = nz / (2.0 * bs[2])
 
     for ii in prange(n_particles):
-        
-        gx = positions[ii, 0] * inv_dx
-        gy = positions[ii, 1] * inv_dy
-        gz = positions[ii, 2] * inv_dz
+        x0 = positions[ii, 0]
+        x1 = positions[ii, 1]
+        x2 = positions[ii, 2]
+        if origin is not None:
+            # Survey -> box frame on the fly (see baorecon.mas.cpu).
+            x0 = x0 - origin[0]
+            x1 = x1 - origin[1]
+            x2 = x2 - origin[2]
+        if pbc:
+            x0 = x0 % boxsize[0]
+            x1 = x1 % boxsize[1]
+            x2 = x2 % boxsize[2]
+        gx = x0 * inv_dx
+        gy = x1 * inv_dy
+        gz = x2 * inv_dz
         
         ix0 = int(gx)
         iy0 = int(gy)
@@ -322,16 +371,19 @@ def differentiate_potential_jit_cic(
         shifts[ii, 2] = - pz * norm_z
 
 
-@njit(fastmath=True, parallel=True, cache=True, nogil=True)
+@njit(fastmath=FASTMATH, parallel=True, cache=True, nogil=True)
 def differentiate_potential_tsc_jit(
                 mesh: np.ndarray, 
                 positions: np.ndarray, 
                 shifts: np.ndarray, 
                 nmesh_dims: np.ndarray, 
                 boxsize: np.ndarray,
+                origin=None,
+                pbc=False,
                 ) -> None:
     """
     Interpolates the gravitational potential 'mesh' at particle 'positions' using the Triangular Shaped Cloud (TSC) scheme.
+    ``origin`` and ``pbc`` as in :func:`differentiate_potential_jit_cic`.
     """
     
     nx = int(nmesh_dims[0])
@@ -343,9 +395,21 @@ def differentiate_potential_tsc_jit(
     norm = nmesh_dims / (2.0 * boxsize)
 
     for ii in prange(n_particles):
-        gx = positions[ii, 0] * inv_cell[0]
-        gy = positions[ii, 1] * inv_cell[1]
-        gz = positions[ii, 2] * inv_cell[2]
+        x0 = positions[ii, 0]
+        x1 = positions[ii, 1]
+        x2 = positions[ii, 2]
+        if origin is not None:
+            # Survey -> box frame on the fly (see baorecon.mas.cpu).
+            x0 = x0 - origin[0]
+            x1 = x1 - origin[1]
+            x2 = x2 - origin[2]
+        if pbc:
+            x0 = x0 % boxsize[0]
+            x1 = x1 % boxsize[1]
+            x2 = x2 % boxsize[2]
+        gx = x0 * inv_cell[0]
+        gy = x1 * inv_cell[1]
+        gz = x2 * inv_cell[2]
         
         # Replaced round() with floor(x + 0.5)
         ix_c = int(np.floor(gx + 0.5))
@@ -389,7 +453,7 @@ def differentiate_potential_tsc_jit(
 ###########################
 ########## GRADIENT
 ###########################
-@njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
 def gradient_periodic_jit(phi, displacement, dx, dy, dz):
     """Centered finite-difference gradient with periodic indices.
 
@@ -415,7 +479,7 @@ def gradient_periodic_jit(phi, displacement, dx, dy, dz):
 ###########################
 ########## TRACER SHIFT
 ###########################
-@njit(parallel=True, fastmath=True, cache=True, nogil=True)
+@njit(parallel=True, fastmath=FASTMATH, cache=True, nogil=True)
 def shifted_positions_rsd(pos, psi, f, radial, los, out):
     """Shifted tracer positions ``pos - (psi + f (psi . n) n)`` in one pass.
 

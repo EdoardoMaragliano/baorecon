@@ -37,6 +37,11 @@ git-ignored `local_tests/`; they are not part of the tracked suite.)
   faces, where the non-periodic clamp applies), read-out of constant and linear fields,
   dtype propagation, and input/scheme/device validation. The non-periodic path is the
   one survey runs take.
+- `test_survey_frame.py` — painting and read-out straight from the survey frame
+  (`survey_frame=True`, the kernels' `origin`): every scheme, periodic and not,
+  serial and chunked, float32 and float64, bit for bit against `survey_to_box_frame`;
+  `DensityManager` holding no box-frame copy (the `*_pos_box` properties are computed
+  on request); the reconstructor reading Psi at the survey positions.
 - `test_rectype_and_api.py` — both reconstruction conventions and the one-line public
   API. `rec-sym` and `rec-iso` are pinned by what distinguishes them (whether the
   randoms carry the RSD term), not by a smoke test; `reconstruct_positions` is checked

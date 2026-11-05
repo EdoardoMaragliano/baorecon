@@ -58,6 +58,8 @@ from typing import Any, Dict, Optional
 import numpy as np
 from numba import njit, prange
 
+from baorecon.utils.numba_flags import FASTMATH
+
 from baorecon.utils.loggers import setup_logger
 
 logger = setup_logger(__name__)
@@ -82,7 +84,7 @@ __all__ = ["ConeFrame"]
 _SUM_CHUNKS = 1024
 
 
-@njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
 def _direction_sum_from_positions(positions):
     """Sum of the per-object unit vectors of ``positions``, in float64."""
     n = positions.shape[0]
@@ -115,7 +117,7 @@ def _direction_sum_from_positions(positions):
     return sx, sy, sz
 
 
-@njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
 def _direction_sum_from_angles(ra_deg, dec_deg):
     """Sum of the unit vectors of the (RA, DEC) directions, in float64."""
     n = ra_deg.shape[0]
@@ -147,7 +149,7 @@ def _direction_sum_from_angles(ra_deg, dec_deg):
     return sx, sy, sz
 
 
-@njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
 def _rotate_inplace(a, R):
     """Overwrite ``a`` with ``a @ R.T``; the three components are read first."""
     r00, r01, r02 = R[0, 0], R[0, 1], R[0, 2]
@@ -162,7 +164,7 @@ def _rotate_inplace(a, R):
         a[i, 2] = r20 * x + r21 * y + r22 * z
 
 
-@njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
 def _rotate_into(a, R, out):
     """Write ``a @ R.T`` into ``out``."""
     r00, r01, r02 = R[0, 0], R[0, 1], R[0, 2]
@@ -177,7 +179,7 @@ def _rotate_into(a, R, out):
         out[i, 2] = r20 * x + r21 * y + r22 * z
 
 
-@njit(parallel=True, fastmath=True, cache=True)
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
 def _min_cos_deviation(positions, ax, ay, az):
     """Smallest ``cos`` between ``positions`` and the axis (i.e. widest angle)."""
     smallest = 1.0

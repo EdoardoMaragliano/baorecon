@@ -81,8 +81,6 @@ class DensityManager:
         self.sm_mode = sm_mode
         self.mas_parallel = mas_parallel
 
-        self.data_pos_box: Optional[np.ndarray] = None
-        self.random_pos_box: Optional[np.ndarray] = None
         self.data_weights: Optional[np.ndarray] = None
         self.random_weights: Optional[np.ndarray] = None
 
@@ -130,16 +128,13 @@ class DensityManager:
 
         self.boxcentre = format_boxcentre(self.boxcentre, dtype=self.dtype)
 
-        self.data_pos_box = survey_to_box_frame(self._raw_data_pos, self.min_corner, self.boxsize,
-                                                pbc=self.pbc, dtype=self.dtype)
-        self.random_pos_box = survey_to_box_frame(self._raw_random_pos, self.min_corner, self.boxsize,
-                                                  pbc=self.pbc, dtype=self.dtype)
-        
-        del self._raw_data_pos
-        del self._raw_random_pos
-
-        self.data_weights = format_weights(self._raw_data_weights, size=len(self.data_pos_box), dtype=self.dtype)
-        self.random_weights = format_weights(self._raw_random_weights, size=len(self.random_pos_box), dtype=self.dtype)
+        # The catalogues stay in the survey frame, as given (references, no
+        # copy): the painting and read-out kernels move each position to the
+        # box frame as they read it (survey_frame=True), so the two (N, 3)
+        # box-frame arrays are never built. See data_pos_box / random_pos_box
+        # for an on-demand view.
+        self.data_weights = format_weights(self._raw_data_weights, size=len(self._raw_data_pos), dtype=self.dtype)
+        self.random_weights = format_weights(self._raw_random_weights, size=len(self._raw_random_pos), dtype=self.dtype)
 
         self.MAS = format_mas(self.MAS)
 
@@ -147,6 +142,33 @@ class DensityManager:
     def min_corner(self) -> np.ndarray:
         """Lower corner of the survey box in the original survey frame."""
         return self.boxcentre - self.boxsize / 2.0
+
+    @property
+    def data_pos(self) -> np.ndarray:
+        """The data positions in the survey frame, as given (no copy)."""
+        return self._raw_data_pos
+
+    @property
+    def random_pos(self) -> np.ndarray:
+        """The random positions in the survey frame, as given (no copy)."""
+        return self._raw_random_pos
+
+    @property
+    def data_pos_box(self) -> np.ndarray:
+        """Data positions in the box frame ``[0, boxsize]``, computed on request.
+
+        A new array every time (``survey_to_box_frame`` of :attr:`data_pos`):
+        nothing is kept, so a run that never reads it never pays for it. Bind
+        it to a name if you need it more than once.
+        """
+        return survey_to_box_frame(self._raw_data_pos, self.min_corner, self.boxsize,
+                                   pbc=self.pbc, dtype=self.dtype)
+
+    @property
+    def random_pos_box(self) -> np.ndarray:
+        """Random positions in the box frame, computed on request (see :attr:`data_pos_box`)."""
+        return survey_to_box_frame(self._raw_random_pos, self.min_corner, self.boxsize,
+                                   pbc=self.pbc, dtype=self.dtype)
 
     def compute_delta(self, sm_mode: str = "wrap") -> np.ndarray:
         if self.device == "gpu":
@@ -157,18 +179,20 @@ class DensityManager:
             xp = np
 
         logger.debug("Assigning data to mesh...")
-        data_rho = assign(self.data_pos_box, self.data_weights, self.mesh,
-                          scheme=self.MAS, device=self.device, pbc=self.pbc, parallel=self.mas_parallel)
+        data_rho = assign(self._raw_data_pos, self.data_weights, self.mesh,
+                          scheme=self.MAS, device=self.device, pbc=self.pbc, parallel=self.mas_parallel,
+                          survey_frame=True)
         data_rho = smoothed_field(data_rho, self.mesh, self.smoothing_radius)
 
         logger.debug("Assigning randoms to mesh...")
-        random_rho = assign(self.random_pos_box, self.random_weights, self.mesh,
-                            scheme=self.MAS, device=self.device, pbc=self.pbc, parallel=self.mas_parallel)
+        random_rho = assign(self._raw_random_pos, self.random_weights, self.mesh,
+                            scheme=self.MAS, device=self.device, pbc=self.pbc, parallel=self.mas_parallel,
+                            survey_frame=True)
         random_rho = smoothed_field(random_rho, self.mesh, self.smoothing_radius)
 
         logger.debug("Computing overdensity field...")
         alpha = xp.sum(data_rho) / xp.sum(random_rho)
-        threshold = self.threshold_randoms * random_rho.sum() / len(self.random_pos_box)
+        threshold = self.threshold_randoms * random_rho.sum() / len(self._raw_random_pos)
         th_mask = random_rho <= threshold
 
         xp.multiply(random_rho, alpha, out=random_rho)

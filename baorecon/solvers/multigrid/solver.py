@@ -237,12 +237,13 @@ class MultigridSolver(PoissonSolver):
     """Multigrid Poisson/Zel'dovich solver (CPU-only); supports anisotropic grids."""
 
     def __init__(self, delta_on_mesh, mesh, f: float, bias: float, los=None, 
-                 RSDspace: str ="RedshiftSpace", use_plane_parallel=False, dtype = np.float32, smoother="jacobi", **kwargs) -> None:
+                 RSDspace: str ="RedshiftSpace", use_plane_parallel=False, dtype = np.float32, smoother="jacobi",
+                 pbc=False, **kwargs) -> None:
         if f is None:
             raise ValueError("growth rate f must be provided!")
         if bias is None:
             raise ValueError("bias must be provided!")
-        super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace)
+        super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace, pbc=pbc)
         self.los = los
         self._use_plane_parallel = use_plane_parallel
         self._raw: Optional[_RawMultigrid] = None
@@ -315,23 +316,25 @@ class MultigridSolver(PoissonSolver):
         self._displacement = displacement
 
     
-    def read_displacement_at(self, positions: np.ndarray, mas: str = "CIC") -> np.ndarray:
+    def read_displacement_at(self, positions: np.ndarray, mas: str = "CIC",
+                             survey_frame: bool = False) -> np.ndarray:
         if self._potential is None:
             self._compute_potential_mesh()
 
         mas = format_mas(mas)
         disp = np.empty_like(positions)
         nmesh = np.asarray(self.mesh.nmesh, dtype=np.int32)
+        origin = self._origin(positions, survey_frame)
 
         if mas == "CIC":
             differentiate_potential_jit_cic(
                 self.potential.reshape(tuple(nmesh)), positions, disp,
-                nmesh, offset_x=0, boxsize=self.mesh.boxsize
+                nmesh, offset_x=0, boxsize=self.mesh.boxsize, origin=origin, pbc=self._pbc
             )
         elif mas == "TSC":
             differentiate_potential_tsc_jit(
                 self.potential.reshape(tuple(nmesh)), positions, disp,
-                nmesh, self.mesh.boxsize
+                nmesh, self.mesh.boxsize, origin=origin, pbc=self._pbc
             )
         else:
             raise ValueError(f"MAS {mas!r} not supported by the multigrid read-out (use 'CIC' or 'TSC').")

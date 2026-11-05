@@ -97,9 +97,14 @@ if CUPY_AVAILABLE:
             out_values[i, c] = val
 
 
-def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
+def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32, origin=None):
     """CIC interpolation of a vector field on the GPU (periodic wrap or boundary clamp per ``pbc``)."""
     pos_dev = cp.asarray(pos, dtype=dtype)
+    # The device kernels read box-frame positions: shift and wrap a device copy.
+    if origin is not None:
+        pos_dev = pos_dev - cp.asarray(origin, dtype=dtype)
+    if pbc:
+        pos_dev = cp.mod(pos_dev, cp.asarray(np.broadcast_to(np.asarray(boxsize), (3,)), dtype=dtype))
     field_dev = cp.asarray(field, dtype=dtype)
     out = cp.empty((pos_dev.shape[0], 3), dtype=dtype)
     boxsize_dev = cp.asarray(np.broadcast_to(np.asarray(boxsize, dtype=np.float64), (3,)))
@@ -109,9 +114,14 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
     return out
 
 
-def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32):
+def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32, origin=None):
     """TSC interpolation of a vector field on the GPU (periodic wrap or boundary clamp per ``pbc``)."""
     pos_dev = cp.asarray(pos, dtype=dtype)
+    # The device kernels read box-frame positions: shift and wrap a device copy.
+    if origin is not None:
+        pos_dev = pos_dev - cp.asarray(origin, dtype=dtype)
+    if pbc:
+        pos_dev = cp.mod(pos_dev, cp.asarray(np.broadcast_to(np.asarray(boxsize), (3,)), dtype=dtype))
     field_dev = cp.asarray(field, dtype=dtype)
     out = cp.empty((pos_dev.shape[0], 3), dtype=dtype)
     boxsize_dev = cp.asarray(np.broadcast_to(np.asarray(boxsize, dtype=np.float64), (3,)))

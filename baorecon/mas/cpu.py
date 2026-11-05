@@ -12,19 +12,36 @@ Boundary handling is uniform across schemes and across the serial/parallel
 variants: with ``pbc`` the stencil wraps periodically; without it, out-of-range
 stencil cells are clamped to the nearest boundary cell (mass-conserving), which
 matches the read-out kernels.
+
+Frame handling: every kernel takes an optional ``origin`` (length-3, the
+box's lower corner in the frame of ``pos``). With ``origin=None`` the
+positions are read as they are, already in the box frame; with an ``origin``
+each coordinate is moved to the box frame on the fly, ``x - origin``, in the
+dtype of ``pos``. ``pbc`` then applies to everything at once: a periodic box
+wraps the coordinate into ``[0, boxsize)`` and wraps the stencil, a
+non-periodic one does neither. These are the operations
+``survey_to_box_frame`` performed on a copy, so painting from the survey frame
+gives the same grid bit for bit, without ever holding that copy.
 """
 
 import numpy as np
 from numba import njit, prange
 
+from baorecon.utils.numba_flags import FASTMATH
+
 
 # ============================================================================
 # Particles -> grid (painting)
 # ============================================================================
-def ngp_assign(pos, boxsize, weights, density_grid, pbc=True):
+def ngp_assign(pos, boxsize, weights, density_grid, pbc=True, origin=None):
     """Nearest-grid-point painting (vectorized numpy)."""
     nx, ny, nz = density_grid.shape
     inv = np.array([nx, ny, nz], dtype=np.float64) / boxsize
+    # Vectorised kernel: the box-frame positions are a transient here.
+    if origin is not None:
+        pos = pos - origin
+    if pbc:
+        pos = np.mod(pos, boxsize)
     indices = np.floor(pos * inv + 0.5).astype(np.int64)
     if pbc:
         indices = np.mod(indices, np.array([nx, ny, nz]))
@@ -36,8 +53,8 @@ def ngp_assign(pos, boxsize, weights, density_grid, pbc=True):
     return density_grid
 
 
-@njit(parallel=False, fastmath=True, cache=True)
-def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
+@njit(parallel=False, fastmath=FASTMATH, cache=True)
+def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None):
     """Cloud-in-cell painting, single-threaded."""
     nx, ny, nz = density_grid.shape
     inv0 = nx / boxsize[0]
@@ -53,7 +70,12 @@ def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
 
     for i in range(pos.shape[0]):
         for axis in range(3):
-            dist = pos[i, axis] * invs[axis]
+            x = pos[i, axis]
+            if origin is not None:
+                x = x - origin[axis]
+            if pbc:
+                x = x % boxsize[axis]
+            dist = x * invs[axis]
             cell = int(np.floor(dist))   # floor, not trunc: correct for dist < 0
             u[axis] = dist - cell
             d[axis] = 1.0 - u[axis]
@@ -76,8 +98,8 @@ def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
     return density_grid
 
 
-@njit(parallel=True, fastmath=True, cache=True)
-def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True):
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
+def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True, origin=None):
     """Cloud-in-cell painting, multi-threaded via per-chunk private grids."""
     N = pos.shape[0]
     nx, ny, nz = density_grid.shape
@@ -94,9 +116,20 @@ def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
         grid = local_grids[c]
         for p in range(start, end):
             mass = weights[p]
-            gx = pos[p, 0] * inv0
-            gy = pos[p, 1] * inv1
-            gz = pos[p, 2] * inv2
+            x0 = pos[p, 0]
+            x1 = pos[p, 1]
+            x2 = pos[p, 2]
+            if origin is not None:
+                x0 = x0 - origin[0]
+                x1 = x1 - origin[1]
+                x2 = x2 - origin[2]
+            if pbc:
+                x0 = x0 % boxsize[0]
+                x1 = x1 % boxsize[1]
+                x2 = x2 % boxsize[2]
+            gx = x0 * inv0
+            gy = x1 * inv1
+            gz = x2 * inv2
             i = int(np.floor(gx))
             j = int(np.floor(gy))
             k = int(np.floor(gz))
@@ -148,8 +181,8 @@ def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
     return density_grid
 
 
-@njit(parallel=False, fastmath=True, cache=True)
-def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
+@njit(parallel=False, fastmath=FASTMATH, cache=True)
+def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None):
     """Triangular-shaped-cloud painting, single-threaded."""
     nx, ny, nz = density_grid.shape
     n_axis = (nx, ny, nz)
@@ -160,7 +193,12 @@ def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
 
     for i in range(pos.shape[0]):
         for axis in range(3):
-            dist = pos[i, axis] * invs[axis]
+            x = pos[i, axis]
+            if origin is not None:
+                x = x - origin[axis]
+            if pbc:
+                x = x % boxsize[axis]
+            dist = x * invs[axis]
             minimum = np.int64(np.floor(dist - 1.5))
             for j in range(3):
                 raw = minimum + j + 1
@@ -184,8 +222,8 @@ def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True):
     return density_grid
 
 
-@njit(parallel=True, fastmath=True, cache=True)
-def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True):
+@njit(parallel=True, fastmath=FASTMATH, cache=True)
+def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True, origin=None):
     """Triangular-shaped-cloud painting, multi-threaded via per-chunk grids."""
     N = pos.shape[0]
     nx, ny, nz = density_grid.shape
@@ -202,9 +240,20 @@ def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
         grid = local_grids[c]
         for p in range(start, end):
             mass = weights[p]
-            gx = pos[p, 0] * inv0
-            gy = pos[p, 1] * inv1
-            gz = pos[p, 2] * inv2
+            x0 = pos[p, 0]
+            x1 = pos[p, 1]
+            x2 = pos[p, 2]
+            if origin is not None:
+                x0 = x0 - origin[0]
+                x1 = x1 - origin[1]
+                x2 = x2 - origin[2]
+            if pbc:
+                x0 = x0 % boxsize[0]
+                x1 = x1 % boxsize[1]
+                x2 = x2 % boxsize[2]
+            gx = x0 * inv0
+            gy = x1 * inv1
+            gz = x2 * inv2
             ix = int(np.floor(gx + 0.5))
             iy = int(np.floor(gy + 0.5))
             iz = int(np.floor(gz + 0.5))
@@ -244,15 +293,20 @@ def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
 # ============================================================================
 # Grid -> particles (read-out, scalar field)
 # ============================================================================
-@njit(parallel=False, fastmath=True, cache=True)
-def ngp_read(pos, grid, boxsize, out, pbc=True):
+@njit(parallel=False, fastmath=FASTMATH, cache=True)
+def ngp_read(pos, grid, boxsize, out, pbc=True, origin=None):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
     n_axis = (nx, ny, nz)
     index = np.zeros(3, dtype=np.int64)
     for i in range(pos.shape[0]):
         for axis in range(3):
-            idx = int(round(pos[i, axis] * invs[axis]))
+            x = pos[i, axis]
+            if origin is not None:
+                x = x - origin[axis]
+            if pbc:
+                x = x % boxsize[axis]
+            idx = int(round(x * invs[axis]))
             if pbc:
                 index[axis] = idx % n_axis[axis]
             else:
@@ -261,8 +315,8 @@ def ngp_read(pos, grid, boxsize, out, pbc=True):
     return out
 
 
-@njit(parallel=False, fastmath=True, cache=True)
-def cic_read(pos, grid, boxsize, out, pbc=True):
+@njit(parallel=False, fastmath=FASTMATH, cache=True)
+def cic_read(pos, grid, boxsize, out, pbc=True, origin=None):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
     n_axis = (nx, ny, nz)
@@ -272,7 +326,12 @@ def cic_read(pos, grid, boxsize, out, pbc=True):
     index_d = np.zeros(3, dtype=np.int64)
     for i in range(pos.shape[0]):
         for axis in range(3):
-            dist = pos[i, axis] * invs[axis]
+            x = pos[i, axis]
+            if origin is not None:
+                x = x - origin[axis]
+            if pbc:
+                x = x % boxsize[axis]
+            dist = x * invs[axis]
             cell = int(np.floor(dist))   # floor, not trunc: correct for dist < 0
             u[axis] = dist - cell
             d[axis] = 1.0 - u[axis]
@@ -293,15 +352,26 @@ def cic_read(pos, grid, boxsize, out, pbc=True):
     return out
 
 
-@njit(parallel=False, fastmath=True, cache=True)
-def tsc_read(pos, grid, boxsize, out, pbc=True):
+@njit(parallel=False, fastmath=FASTMATH, cache=True)
+def tsc_read(pos, grid, boxsize, out, pbc=True, origin=None):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
     n_axis = (nx, ny, nz)
     for p in range(pos.shape[0]):
-        gx = pos[p, 0] * invs[0]
-        gy = pos[p, 1] * invs[1]
-        gz = pos[p, 2] * invs[2]
+        x0 = pos[p, 0]
+        x1 = pos[p, 1]
+        x2 = pos[p, 2]
+        if origin is not None:
+            x0 = x0 - origin[0]
+            x1 = x1 - origin[1]
+            x2 = x2 - origin[2]
+        if pbc:
+            x0 = x0 % boxsize[0]
+            x1 = x1 % boxsize[1]
+            x2 = x2 % boxsize[2]
+        gx = x0 * invs[0]
+        gy = x1 * invs[1]
+        gz = x2 * invs[2]
         ix_c = int(round(gx))
         iy_c = int(round(gy))
         iz_c = int(round(gz))

@@ -87,17 +87,28 @@ def divergence_FFT(vector_field, k_components):
     return _gpu.divergence_FFT(vector_field, k_components)
 
 
-def interpolate_vector_field(pos, field, boxsize, MAS="CIC", pbc=True, dtype=np.float32):
-    """Interpolate a vector field at particle positions using a CIC/TSC scheme."""
+def interpolate_vector_field(pos, field, boxsize, MAS="CIC", pbc=True, dtype=np.float32,
+                             origin=None):
+    """Interpolate a vector field at particle positions using a CIC/TSC scheme.
+
+    ``pos`` is in the box frame unless ``origin`` (the box's lower corner in
+    the frame of ``pos``) is given: then each coordinate is moved to the box
+    frame as it is read, and no box-frame copy of ``pos`` is built. ``pbc``
+    wraps the coordinate into ``[0, boxsize)`` and the stencil.
+    """
     start_time = time.time()
     boxsize = _as_boxsize3(boxsize)
     xp = _get_array_module(pos, field)
     backend = _cpu if xp is np else _gpu
+    if origin is not None:
+        origin = np.asarray(origin, dtype=np.asarray(pos).dtype)
 
     if MAS == "CIC":
-        interp_field = backend.interpolate_cic_vector(pos, field, boxsize, pbc=pbc, dtype=dtype)
+        interp_field = backend.interpolate_cic_vector(pos, field, boxsize, pbc=pbc, dtype=dtype,
+                                                      origin=origin)
     elif MAS == "TSC":
-        interp_field = backend.interpolate_tsc_vector(pos, field, boxsize, pbc=pbc, dtype=dtype)
+        interp_field = backend.interpolate_tsc_vector(pos, field, boxsize, pbc=pbc, dtype=dtype,
+                                                      origin=origin)
     else:
         raise ValueError("MAS must be one of 'CIC' or 'TSC'")
 

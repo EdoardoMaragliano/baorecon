@@ -31,10 +31,9 @@ class FFTSolverCPU(PoissonSolver):
 
     def __init__(self, delta_on_mesh, mesh, los=None, f=None, bias=1.0,
                  RSDspace="RealSpace", n_iterations=3, pbc=False) -> None:
-        super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace)
+        super().__init__(delta_on_mesh, mesh, f=f, bias=bias, RSDspace=RSDspace, pbc=pbc)
         self.los = los
         self.n_iterations = n_iterations
-        self._pbc = pbc
         self._complex_j = np.complex64(1j)
         self._k_host = None
 
@@ -220,8 +219,9 @@ class FFTSolverCPU(PoissonSolver):
 
             self._potential = sfft.irfftn(phi_k, s=self.delta_on_mesh.shape, workers=-1)
             
-    def read_displacement_at(self, positions, mas="CIC"):
+    def read_displacement_at(self, positions, mas="CIC", survey_frame=False):
         """Interpolate the spectral displacement grid at ``positions`` (host ``(N, 3)``)."""
+        origin = self._origin(positions, survey_frame)
         return interpolate_vector_field(
             pos=positions,
             field=self.displacement,
@@ -229,4 +229,5 @@ class FFTSolverCPU(PoissonSolver):
             MAS=format_mas(mas),
             pbc=self._pbc,
             dtype=self.mesh.dtype,
+            origin=origin,
         )
