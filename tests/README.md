@@ -38,7 +38,7 @@ git-ignored `local_tests/`; they are not part of the tracked suite.)
   dtype propagation, and input/scheme/device validation. The non-periodic path is the
   one survey runs take.
 - `test_survey_frame.py` — painting and read-out straight from the survey frame
-  (`survey_frame=True`, the kernels' `origin`): every scheme, periodic and not,
+  (`survey_frame=True`, the kernels' `min_corner`): every scheme, periodic and not,
   serial and chunked, float32 and float64, bit for bit against `survey_to_box_frame`;
   `DensityManager` holding no box-frame copy (the `*_pos_box` properties are computed
   on request); the reconstructor reading Psi at the survey positions.

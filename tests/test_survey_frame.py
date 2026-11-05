@@ -84,7 +84,7 @@ def test_vector_interpolation_from_the_survey_frame_is_bit_identical(dtype, sche
     pos = _survey_positions(mesh, outside=pbc)
     field = np.random.RandomState(3).normal(size=mesh.shape + (3,)).astype(dtype)
     direct = interpolate_vector_field(pos, field, mesh.boxsize, MAS=scheme, pbc=pbc, dtype=dtype,
-                                      origin=mesh.min_corner)
+                                      min_corner=mesh.min_corner)
     via_copy = interpolate_vector_field(_box_positions(mesh, pos, pbc), field, mesh.boxsize,
                                         MAS=scheme, pbc=pbc, dtype=dtype)
     assert np.array_equal(direct, via_copy)
@@ -100,12 +100,12 @@ def test_potential_differentiation_from_the_survey_frame_is_bit_identical(dtype,
     nmesh = np.asarray(mesh.nmesh, dtype=np.int32)
     direct = np.empty_like(pos)
     via_copy = np.empty_like(pos)
-    origin = np.asarray(mesh.min_corner, dtype=dtype)
+    min_corner = np.asarray(mesh.min_corner, dtype=dtype)
     if scheme == "CIC":
-        differentiate_potential_jit_cic(phi, pos, direct, nmesh, 0, mesh.boxsize, origin=origin, pbc=pbc)
+        differentiate_potential_jit_cic(phi, pos, direct, nmesh, 0, mesh.boxsize, min_corner=min_corner, pbc=pbc)
         differentiate_potential_jit_cic(phi, _box_positions(mesh, pos, pbc), via_copy, nmesh, 0, mesh.boxsize, pbc=pbc)
     else:
-        differentiate_potential_tsc_jit(phi, pos, direct, nmesh, mesh.boxsize, origin=origin, pbc=pbc)
+        differentiate_potential_tsc_jit(phi, pos, direct, nmesh, mesh.boxsize, min_corner=min_corner, pbc=pbc)
         differentiate_potential_tsc_jit(phi, _box_positions(mesh, pos, pbc), via_copy, nmesh, mesh.boxsize, pbc=pbc)
     assert np.array_equal(direct, via_copy)
 

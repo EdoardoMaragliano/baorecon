@@ -88,11 +88,11 @@ def divergence_FFT(vector_field, k_components):
 
 
 def interpolate_vector_field(pos, field, boxsize, MAS="CIC", pbc=True, dtype=np.float32,
-                             origin=None):
+                             min_corner=None):
     """Interpolate a vector field at particle positions using a CIC/TSC scheme.
 
-    ``pos`` is in the box frame unless ``origin`` (the box's lower corner in
-    the frame of ``pos``) is given: then each coordinate is moved to the box
+    ``pos`` is in the box frame unless ``min_corner`` (the box's lower corner
+    in the frame of ``pos``) is given: then each coordinate is moved to the box
     frame as it is read, and no box-frame copy of ``pos`` is built. ``pbc``
     wraps the coordinate into ``[0, boxsize)`` and the stencil.
     """
@@ -100,15 +100,15 @@ def interpolate_vector_field(pos, field, boxsize, MAS="CIC", pbc=True, dtype=np.
     boxsize = _as_boxsize3(boxsize)
     xp = _get_array_module(pos, field)
     backend = _cpu if xp is np else _gpu
-    if origin is not None:
-        origin = np.asarray(origin, dtype=np.asarray(pos).dtype)
+    if min_corner is not None:
+        min_corner = np.asarray(min_corner, dtype=np.asarray(pos).dtype)
 
     if MAS == "CIC":
         interp_field = backend.interpolate_cic_vector(pos, field, boxsize, pbc=pbc, dtype=dtype,
-                                                      origin=origin)
+                                                      min_corner=min_corner)
     elif MAS == "TSC":
         interp_field = backend.interpolate_tsc_vector(pos, field, boxsize, pbc=pbc, dtype=dtype,
-                                                      origin=origin)
+                                                      min_corner=min_corner)
     else:
         raise ValueError("MAS must be one of 'CIC' or 'TSC'")
 

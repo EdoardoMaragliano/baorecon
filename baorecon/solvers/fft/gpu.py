@@ -8,6 +8,8 @@ asked for, is recomputed from the device-resident displacement rather than from
 a stored psi_k grid.
 """
 
+import numpy as np
+
 from baorecon.field_ops import interpolate_vector_field
 from baorecon.solvers._interface import PoissonSolver
 from baorecon.solvers.fft._common import (
@@ -305,7 +307,8 @@ class FFTSolverGPU(PoissonSolver):
         array); only the small per-particle ``(N, 3)`` result is brought back to
         host so the downstream shift math stays host-side numpy.
         """
-        origin = self._origin(positions, survey_frame)
+        min_corner = (np.asarray(self.mesh.min_corner, dtype=np.asarray(positions).dtype)
+                      if survey_frame else None)
         shifts = interpolate_vector_field(
             pos=positions,
             field=self.displacement,
@@ -313,7 +316,7 @@ class FFTSolverGPU(PoissonSolver):
             MAS=format_mas(mas),
             pbc=self._pbc,
             dtype=self.mesh.dtype,
-            origin=origin,
+            min_corner=min_corner,
         )
         if _cupy is not None and isinstance(shifts, _cupy.ndarray):
             shifts = _cupy.asnumpy(shifts)

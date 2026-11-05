@@ -221,7 +221,8 @@ class FFTSolverCPU(PoissonSolver):
             
     def read_displacement_at(self, positions, mas="CIC", survey_frame=False):
         """Interpolate the spectral displacement grid at ``positions`` (host ``(N, 3)``)."""
-        origin = self._origin(positions, survey_frame)
+        min_corner = (np.asarray(self.mesh.min_corner, dtype=np.asarray(positions).dtype)
+                      if survey_frame else None)
         return interpolate_vector_field(
             pos=positions,
             field=self.displacement,
@@ -229,5 +230,5 @@ class FFTSolverCPU(PoissonSolver):
             MAS=format_mas(mas),
             pbc=self._pbc,
             dtype=self.mesh.dtype,
-            origin=origin,
+            min_corner=min_corner,
         )

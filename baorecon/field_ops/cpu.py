@@ -61,7 +61,7 @@ def divergence_finite_diff(vector_field: np.ndarray, cell_size: float) -> np.nda
 
 
 @njit(parallel=True, fastmath=FASTMATH, cache=True)
-def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32, origin=None):
+def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32, min_corner=None):
     """Trilinear CIC interpolation of a vector field at particle positions.
 
     ``boxsize`` is a length-3 array giving the per-axis box size, and the grid
@@ -70,9 +70,9 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32, orig
     cells on the other two and index the wrong nodes -- and where axis 0 is the
     longest, clamp past the end of a shorter axis.
 
-    ``origin`` moves survey-frame positions to the box frame as they are read,
+    ``min_corner`` moves survey-frame positions to the box frame as they are read,
     and ``pbc`` wraps the coordinate and the stencil, as in
-    :mod:`baorecon.mas.cpu`; ``origin=None`` means ``pos`` is already in the
+    :mod:`baorecon.mas.cpu`; ``min_corner=None`` means ``pos`` is already in the
     box frame.
     """
     N = pos.shape[0]
@@ -88,11 +88,11 @@ def interpolate_cic_vector(pos, field, boxsize, pbc=True, dtype=np.float32, orig
         x0 = pos[idx, 0]
         x1 = pos[idx, 1]
         x2 = pos[idx, 2]
-        if origin is not None:
+        if min_corner is not None:
             # Survey -> box frame on the fly (see baorecon.mas.cpu).
-            x0 = x0 - origin[0]
-            x1 = x1 - origin[1]
-            x2 = x2 - origin[2]
+            x0 = x0 - min_corner[0]
+            x1 = x1 - min_corner[1]
+            x2 = x2 - min_corner[2]
         if pbc:
             x0 = x0 % boxsize[0]
             x1 = x1 % boxsize[1]
@@ -160,10 +160,10 @@ def tsc_weight(dx):
 
 
 @njit(parallel=True, fastmath=FASTMATH, cache=True)
-def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32, origin=None):
+def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32, min_corner=None):
     """TSC interpolation of a vector field at particle positions.
 
-    Per-axis grid size, ``origin`` and ``pbc``, as in :func:`interpolate_cic_vector`.
+    Per-axis grid size, ``min_corner`` and ``pbc``, as in :func:`interpolate_cic_vector`.
     """
     N = pos.shape[0]
     nx = field.shape[0]
@@ -178,11 +178,11 @@ def interpolate_tsc_vector(pos, field, boxsize, pbc=True, dtype=np.float32, orig
         x0 = pos[idx, 0]
         x1 = pos[idx, 1]
         x2 = pos[idx, 2]
-        if origin is not None:
+        if min_corner is not None:
             # Survey -> box frame on the fly (see baorecon.mas.cpu).
-            x0 = x0 - origin[0]
-            x1 = x1 - origin[1]
-            x2 = x2 - origin[2]
+            x0 = x0 - min_corner[0]
+            x1 = x1 - min_corner[1]
+            x2 = x2 - min_corner[2]
         if pbc:
             x0 = x0 % boxsize[0]
             x1 = x1 % boxsize[1]
@@ -244,14 +244,14 @@ def differentiate_potential_jit_cic(
                 nmesh_dims: np.ndarray, 
                 offset_x: int, 
                 boxsize: np.ndarray,
-                origin=None,
+                min_corner=None,
                 pbc=False,
                 ) -> None:
     """
     Interpolates the gravitational potential 'mesh' at particle 'positions' using the Cloud-In-Cell (CIC) scheme.
     Calculates displacement vectors at particle positions and writes the results directly into the 'shifts' buffer.
-    ``origin`` moves survey-frame positions to the box frame as they are read
-    (see :mod:`baorecon.mas.cpu`); ``origin=None`` means box frame. ``pbc``
+    ``min_corner`` moves survey-frame positions to the box frame as they are read
+    (see :mod:`baorecon.mas.cpu`); ``min_corner=None`` means box frame. ``pbc``
     wraps the coordinate into the box; the stencil indices are always
     periodic here, as the multigrid potential is.
     """
@@ -275,11 +275,11 @@ def differentiate_potential_jit_cic(
         x0 = positions[ii, 0]
         x1 = positions[ii, 1]
         x2 = positions[ii, 2]
-        if origin is not None:
+        if min_corner is not None:
             # Survey -> box frame on the fly (see baorecon.mas.cpu).
-            x0 = x0 - origin[0]
-            x1 = x1 - origin[1]
-            x2 = x2 - origin[2]
+            x0 = x0 - min_corner[0]
+            x1 = x1 - min_corner[1]
+            x2 = x2 - min_corner[2]
         if pbc:
             x0 = x0 % boxsize[0]
             x1 = x1 % boxsize[1]
@@ -378,12 +378,12 @@ def differentiate_potential_tsc_jit(
                 shifts: np.ndarray, 
                 nmesh_dims: np.ndarray, 
                 boxsize: np.ndarray,
-                origin=None,
+                min_corner=None,
                 pbc=False,
                 ) -> None:
     """
     Interpolates the gravitational potential 'mesh' at particle 'positions' using the Triangular Shaped Cloud (TSC) scheme.
-    ``origin`` and ``pbc`` as in :func:`differentiate_potential_jit_cic`.
+    ``min_corner`` and ``pbc`` as in :func:`differentiate_potential_jit_cic`.
     """
     
     nx = int(nmesh_dims[0])
@@ -398,11 +398,11 @@ def differentiate_potential_tsc_jit(
         x0 = positions[ii, 0]
         x1 = positions[ii, 1]
         x2 = positions[ii, 2]
-        if origin is not None:
+        if min_corner is not None:
             # Survey -> box frame on the fly (see baorecon.mas.cpu).
-            x0 = x0 - origin[0]
-            x1 = x1 - origin[1]
-            x2 = x2 - origin[2]
+            x0 = x0 - min_corner[0]
+            x1 = x1 - min_corner[1]
+            x2 = x2 - min_corner[2]
         if pbc:
             x0 = x0 % boxsize[0]
             x1 = x1 % boxsize[1]

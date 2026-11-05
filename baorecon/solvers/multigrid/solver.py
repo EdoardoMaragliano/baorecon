@@ -324,17 +324,17 @@ class MultigridSolver(PoissonSolver):
         mas = format_mas(mas)
         disp = np.empty_like(positions)
         nmesh = np.asarray(self.mesh.nmesh, dtype=np.int32)
-        origin = self._origin(positions, survey_frame)
+        min_corner = np.asarray(self.mesh.min_corner, dtype=positions.dtype) if survey_frame else None
 
         if mas == "CIC":
             differentiate_potential_jit_cic(
                 self.potential.reshape(tuple(nmesh)), positions, disp,
-                nmesh, offset_x=0, boxsize=self.mesh.boxsize, origin=origin, pbc=self._pbc
+                nmesh, offset_x=0, boxsize=self.mesh.boxsize, min_corner=min_corner, pbc=self._pbc
             )
         elif mas == "TSC":
             differentiate_potential_tsc_jit(
                 self.potential.reshape(tuple(nmesh)), positions, disp,
-                nmesh, self.mesh.boxsize, origin=origin, pbc=self._pbc
+                nmesh, self.mesh.boxsize, min_corner=min_corner, pbc=self._pbc
             )
         else:
             raise ValueError(f"MAS {mas!r} not supported by the multigrid read-out (use 'CIC' or 'TSC').")

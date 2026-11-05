@@ -78,11 +78,4 @@ class PoissonSolver(ABC):
         inside the read-out kernel, without building a box-frame copy.
         """
         raise NotImplementedError
-
-    def _origin(self, positions: np.ndarray, survey_frame: bool):
-        """The box's lower corner for the read-out kernels (see :mod:`baorecon.mas.cpu`);
-        ``None`` when ``positions`` are already in the box frame."""
-        if not survey_frame:
-            return None
-        return np.asarray(self.mesh.min_corner, dtype=np.asarray(positions).dtype)
     

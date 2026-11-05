@@ -41,15 +41,7 @@ if CUPY_AVAILABLE:
 _VALID = ("NGP", "CIC", "TSC")
 
 
-def _origin(mesh, pos, survey_frame):
-    """The box's lower corner in the frame of ``pos``, for the kernels; ``None``
-    when ``pos`` is already in the box frame."""
-    if not survey_frame:
-        return None
-    return np.asarray(mesh.min_corner, dtype=pos.dtype)
-
-
-def _validate_positions(pos, weights, boxsize, pbc, origin=None):
+def _validate_positions(pos, weights, boxsize, pbc, min_corner=None):
     if pos.shape[1] != 3:
         raise ValueError("pos must have shape (N, 3)")
     if pos.shape[0] != weights.shape[0]:
@@ -59,10 +51,10 @@ def _validate_positions(pos, weights, boxsize, pbc, origin=None):
     from baorecon.utils.reductions import position_bounds
 
     low, high = position_bounds(pos)
-    if origin is not None:
+    if min_corner is not None:
         # Six numbers: the bounds in the box frame, without the (N, 3) array.
-        low = low - origin
-        high = high - origin
+        low = low - min_corner
+        high = high - min_corner
     if (low < 0).any() or (high > boxsize).any():
         if pbc:
             warnings.warn("Particles are outside the range [0, boxsize]. PBC is true and will be applied.")
@@ -101,8 +93,8 @@ def assign(pos, weights, mesh, scheme="CIC", device="cpu", pbc=True, parallel=Fa
         weights = weights_in(weights, work_dtype)
 
     boxsize = np.asarray(mesh.boxsize, dtype=work_dtype)
-    origin = _origin(mesh, pos, survey_frame)
-    _validate_positions(pos, weights, boxsize, pbc, origin)
+    min_corner = np.asarray(mesh.min_corner, dtype=pos.dtype) if survey_frame else None
+    _validate_positions(pos, weights, boxsize, pbc, min_corner)
     grid_shape = mesh.shape
 
     if device == "gpu":
@@ -110,8 +102,8 @@ def assign(pos, weights, mesh, scheme="CIC", device="cpu", pbc=True, parallel=Fa
             raise RuntimeError("GPU backend requested, but it is not available (CuPy/CUDA missing).")
         pos_dev = cp.asarray(pos, dtype=cp.float32)
         # The GPU kernels read box-frame positions: shift and wrap a device copy.
-        if origin is not None:
-            pos_dev = pos_dev - cp.asarray(origin, dtype=cp.float32)
+        if min_corner is not None:
+            pos_dev = pos_dev - cp.asarray(min_corner, dtype=cp.float32)
         if pbc:
             pos_dev = cp.mod(pos_dev, cp.asarray(boxsize, dtype=cp.float32))
         weights_dev = cp.asarray(weights, dtype=cp.float32)
@@ -127,15 +119,15 @@ def assign(pos, weights, mesh, scheme="CIC", device="cpu", pbc=True, parallel=Fa
 
     grid = np.zeros(grid_shape, dtype=work_dtype)
     if scheme == "NGP":
-        return _cpu.ngp_assign(pos, boxsize, weights, grid, pbc=pbc, origin=origin)
+        return _cpu.ngp_assign(pos, boxsize, weights, grid, pbc=pbc, min_corner=min_corner)
     if scheme == "CIC":
         if parallel:
-            return _cpu.cic_assign_chunks(pos, boxsize, weights, grid, pbc=pbc, origin=origin)
-        return _cpu.cic_assign_serial(pos, boxsize, weights, grid, pbc=pbc, origin=origin)
+            return _cpu.cic_assign_chunks(pos, boxsize, weights, grid, pbc=pbc, min_corner=min_corner)
+        return _cpu.cic_assign_serial(pos, boxsize, weights, grid, pbc=pbc, min_corner=min_corner)
     if scheme == "TSC":
         if parallel:
-            return _cpu.tsc_assign_chunks(pos, boxsize, weights, grid, pbc=pbc, origin=origin)
-        return _cpu.tsc_assign_serial(pos, boxsize, weights, grid, pbc=pbc, origin=origin)
+            return _cpu.tsc_assign_chunks(pos, boxsize, weights, grid, pbc=pbc, min_corner=min_corner)
+        return _cpu.tsc_assign_serial(pos, boxsize, weights, grid, pbc=pbc, min_corner=min_corner)
 
 
 def readout(grid, pos, mesh, scheme="CIC", device="cpu", pbc=True, survey_frame=False):
@@ -158,9 +150,9 @@ def readout(grid, pos, mesh, scheme="CIC", device="cpu", pbc=True, survey_frame=
             grid_dev = grid_dev[..., cp.newaxis]
         pos_dev = cp.asarray(pos, dtype=cp.float32)
         boxsize_dev = cp.asarray(mesh.boxsize, dtype=cp.float32)
-        origin = _origin(mesh, pos_dev, survey_frame)
-        if origin is not None:
-            pos_dev = pos_dev - cp.asarray(origin, dtype=cp.float32)
+        min_corner = np.asarray(mesh.min_corner, dtype=np.float32) if survey_frame else None
+        if min_corner is not None:
+            pos_dev = pos_dev - cp.asarray(min_corner, dtype=cp.float32)
         if pbc:
             pos_dev = cp.mod(pos_dev, boxsize_dev)
         out_dev = cp.empty((pos_dev.shape[0], grid_dev.shape[-1]), dtype=cp.float32)
@@ -180,11 +172,11 @@ def readout(grid, pos, mesh, scheme="CIC", device="cpu", pbc=True, survey_frame=
     grid = np.asarray(grid, dtype=work_dtype)
     pos = np.asarray(pos, dtype=work_dtype)
     boxsize = np.asarray(mesh.boxsize, dtype=work_dtype)
-    origin = _origin(mesh, pos, survey_frame)
+    min_corner = np.asarray(mesh.min_corner, dtype=pos.dtype) if survey_frame else None
     out = np.zeros(pos.shape[0], dtype=work_dtype)
     if scheme == "NGP":
-        return _cpu.ngp_read(pos, grid, boxsize, out, pbc=pbc, origin=origin)
+        return _cpu.ngp_read(pos, grid, boxsize, out, pbc=pbc, min_corner=min_corner)
     if scheme == "CIC":
-        return _cpu.cic_read(pos, grid, boxsize, out, pbc=pbc, origin=origin)
+        return _cpu.cic_read(pos, grid, boxsize, out, pbc=pbc, min_corner=min_corner)
     if scheme == "TSC":
-        return _cpu.tsc_read(pos, grid, boxsize, out, pbc=pbc, origin=origin)
+        return _cpu.tsc_read(pos, grid, boxsize, out, pbc=pbc, min_corner=min_corner)

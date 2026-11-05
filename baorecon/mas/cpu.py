@@ -13,10 +13,10 @@ variants: with ``pbc`` the stencil wraps periodically; without it, out-of-range
 stencil cells are clamped to the nearest boundary cell (mass-conserving), which
 matches the read-out kernels.
 
-Frame handling: every kernel takes an optional ``origin`` (length-3, the
-box's lower corner in the frame of ``pos``). With ``origin=None`` the
-positions are read as they are, already in the box frame; with an ``origin``
-each coordinate is moved to the box frame on the fly, ``x - origin``, in the
+Frame handling: every kernel takes an optional ``min_corner`` (length-3, the
+box's lower corner in the frame of ``pos``). With ``min_corner=None`` the
+positions are read as they are, already in the box frame; with an ``min_corner``
+each coordinate is moved to the box frame on the fly, ``x - min_corner``, in the
 dtype of ``pos``. ``pbc`` then applies to everything at once: a periodic box
 wraps the coordinate into ``[0, boxsize)`` and wraps the stencil, a
 non-periodic one does neither. These are the operations
@@ -33,13 +33,13 @@ from baorecon.utils.numba_flags import FASTMATH
 # ============================================================================
 # Particles -> grid (painting)
 # ============================================================================
-def ngp_assign(pos, boxsize, weights, density_grid, pbc=True, origin=None):
+def ngp_assign(pos, boxsize, weights, density_grid, pbc=True, min_corner=None):
     """Nearest-grid-point painting (vectorized numpy)."""
     nx, ny, nz = density_grid.shape
     inv = np.array([nx, ny, nz], dtype=np.float64) / boxsize
     # Vectorised kernel: the box-frame positions are a transient here.
-    if origin is not None:
-        pos = pos - origin
+    if min_corner is not None:
+        pos = pos - min_corner
     if pbc:
         pos = np.mod(pos, boxsize)
     indices = np.floor(pos * inv + 0.5).astype(np.int64)
@@ -54,7 +54,7 @@ def ngp_assign(pos, boxsize, weights, density_grid, pbc=True, origin=None):
 
 
 @njit(parallel=False, fastmath=FASTMATH, cache=True)
-def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None):
+def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True, min_corner=None):
     """Cloud-in-cell painting, single-threaded."""
     nx, ny, nz = density_grid.shape
     inv0 = nx / boxsize[0]
@@ -71,8 +71,8 @@ def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None
     for i in range(pos.shape[0]):
         for axis in range(3):
             x = pos[i, axis]
-            if origin is not None:
-                x = x - origin[axis]
+            if min_corner is not None:
+                x = x - min_corner[axis]
             if pbc:
                 x = x % boxsize[axis]
             dist = x * invs[axis]
@@ -99,7 +99,7 @@ def cic_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None
 
 
 @njit(parallel=True, fastmath=FASTMATH, cache=True)
-def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True, origin=None):
+def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True, min_corner=None):
     """Cloud-in-cell painting, multi-threaded via per-chunk private grids."""
     N = pos.shape[0]
     nx, ny, nz = density_grid.shape
@@ -119,10 +119,10 @@ def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
             x0 = pos[p, 0]
             x1 = pos[p, 1]
             x2 = pos[p, 2]
-            if origin is not None:
-                x0 = x0 - origin[0]
-                x1 = x1 - origin[1]
-                x2 = x2 - origin[2]
+            if min_corner is not None:
+                x0 = x0 - min_corner[0]
+                x1 = x1 - min_corner[1]
+                x2 = x2 - min_corner[2]
             if pbc:
                 x0 = x0 % boxsize[0]
                 x1 = x1 % boxsize[1]
@@ -182,7 +182,7 @@ def cic_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
 
 
 @njit(parallel=False, fastmath=FASTMATH, cache=True)
-def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None):
+def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True, min_corner=None):
     """Triangular-shaped-cloud painting, single-threaded."""
     nx, ny, nz = density_grid.shape
     n_axis = (nx, ny, nz)
@@ -194,8 +194,8 @@ def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None
     for i in range(pos.shape[0]):
         for axis in range(3):
             x = pos[i, axis]
-            if origin is not None:
-                x = x - origin[axis]
+            if min_corner is not None:
+                x = x - min_corner[axis]
             if pbc:
                 x = x % boxsize[axis]
             dist = x * invs[axis]
@@ -223,7 +223,7 @@ def tsc_assign_serial(pos, boxsize, weights, density_grid, pbc=True, origin=None
 
 
 @njit(parallel=True, fastmath=FASTMATH, cache=True)
-def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True, origin=None):
+def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=True, min_corner=None):
     """Triangular-shaped-cloud painting, multi-threaded via per-chunk grids."""
     N = pos.shape[0]
     nx, ny, nz = density_grid.shape
@@ -243,10 +243,10 @@ def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
             x0 = pos[p, 0]
             x1 = pos[p, 1]
             x2 = pos[p, 2]
-            if origin is not None:
-                x0 = x0 - origin[0]
-                x1 = x1 - origin[1]
-                x2 = x2 - origin[2]
+            if min_corner is not None:
+                x0 = x0 - min_corner[0]
+                x1 = x1 - min_corner[1]
+                x2 = x2 - min_corner[2]
             if pbc:
                 x0 = x0 % boxsize[0]
                 x1 = x1 % boxsize[1]
@@ -294,7 +294,7 @@ def tsc_assign_chunks(pos, boxsize, weights, density_grid, num_chunks=16, pbc=Tr
 # Grid -> particles (read-out, scalar field)
 # ============================================================================
 @njit(parallel=False, fastmath=FASTMATH, cache=True)
-def ngp_read(pos, grid, boxsize, out, pbc=True, origin=None):
+def ngp_read(pos, grid, boxsize, out, pbc=True, min_corner=None):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
     n_axis = (nx, ny, nz)
@@ -302,8 +302,8 @@ def ngp_read(pos, grid, boxsize, out, pbc=True, origin=None):
     for i in range(pos.shape[0]):
         for axis in range(3):
             x = pos[i, axis]
-            if origin is not None:
-                x = x - origin[axis]
+            if min_corner is not None:
+                x = x - min_corner[axis]
             if pbc:
                 x = x % boxsize[axis]
             idx = int(round(x * invs[axis]))
@@ -316,7 +316,7 @@ def ngp_read(pos, grid, boxsize, out, pbc=True, origin=None):
 
 
 @njit(parallel=False, fastmath=FASTMATH, cache=True)
-def cic_read(pos, grid, boxsize, out, pbc=True, origin=None):
+def cic_read(pos, grid, boxsize, out, pbc=True, min_corner=None):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
     n_axis = (nx, ny, nz)
@@ -327,8 +327,8 @@ def cic_read(pos, grid, boxsize, out, pbc=True, origin=None):
     for i in range(pos.shape[0]):
         for axis in range(3):
             x = pos[i, axis]
-            if origin is not None:
-                x = x - origin[axis]
+            if min_corner is not None:
+                x = x - min_corner[axis]
             if pbc:
                 x = x % boxsize[axis]
             dist = x * invs[axis]
@@ -353,7 +353,7 @@ def cic_read(pos, grid, boxsize, out, pbc=True, origin=None):
 
 
 @njit(parallel=False, fastmath=FASTMATH, cache=True)
-def tsc_read(pos, grid, boxsize, out, pbc=True, origin=None):
+def tsc_read(pos, grid, boxsize, out, pbc=True, min_corner=None):
     nx, ny, nz = grid.shape
     invs = (nx / boxsize[0], ny / boxsize[1], nz / boxsize[2])
     n_axis = (nx, ny, nz)
@@ -361,10 +361,10 @@ def tsc_read(pos, grid, boxsize, out, pbc=True, origin=None):
         x0 = pos[p, 0]
         x1 = pos[p, 1]
         x2 = pos[p, 2]
-        if origin is not None:
-            x0 = x0 - origin[0]
-            x1 = x1 - origin[1]
-            x2 = x2 - origin[2]
+        if min_corner is not None:
+            x0 = x0 - min_corner[0]
+            x1 = x1 - min_corner[1]
+            x2 = x2 - min_corner[2]
         if pbc:
             x0 = x0 % boxsize[0]
             x1 = x1 % boxsize[1]
