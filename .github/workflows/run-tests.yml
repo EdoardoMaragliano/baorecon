@@ -3,6 +3,7 @@ on:
   push:
     branches:
       - main
+      - collab
     paths-ignore:
         - 'README.md'
         - 'docs/**'       # ignora qualsiasi modifica nella cartella docs
@@ -11,6 +12,7 @@ on:
   pull_request:
     branches:
       - main
+      - collab
     paths-ignore:
         - 'README.md'
         - 'docs/**'       # ignora qualsiasi modifica nella cartella docs
