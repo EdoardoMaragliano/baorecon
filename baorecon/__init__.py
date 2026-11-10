@@ -1,6 +1,6 @@
 """Top-level package exports for baorecon."""
 
-__version__ = "0.8.1"
+__version__ = "0.9.0"
 
 from baorecon.api import reconstruct_positions
 from baorecon.io import Catalog, CatalogConfig, ColumnMapping, NamingTokenizer
