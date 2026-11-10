@@ -9,10 +9,79 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 - `generate_gaussian_map` and `generate_lognormal_map` take `seed=None`. An
-  integer draws the phases and amplitudes from a private
+  integer draws the white noise behind the field from a private
   `np.random.default_rng(seed)`, making the field reproducible regardless of
   the global NumPy state; `None` keeps the previous behaviour (global
   generator, so `np.random.seed` still applies).
+- `baorecon.utils.reductions.position_bounds`: the per-axis minimum and maximum
+  of an `(N, 3)` catalogue in one parallel numba pass, with the same bits as
+  numpy in the array's own dtype. `positions.min(axis=0)` on a C-contiguous
+  array goes through numpy's generic iterator one element at a time (24 s on
+  346 M rows, twice over, five times a run); this takes 0.2 s at 16 threads.
+  Every bound in the package goes through it (`check_boxsize`,
+  `set_boxsize_from_positions`, `set_boxcentre_from_positions`, the
+  `DensityManager` extent, the engine's box centre), and the position
+  validation compares six numbers instead of building two catalogue-sized
+  boolean masks. DR1 TEST6: `choose_grid` 1.3 s -> 0.0 s, solve 5.6 s -> 3.6 s.
+- `baorecon.utils.formatters.weights_in`: a float weight column no wider than
+  the working precision is kept as it is, by reference; a wider or non-float
+  one is cast down to it. The mass-assignment kernel multiplies the weight
+  into the mesh's precision, so promoting a float32 weight beforehand was
+  exact but bought only a catalogue-sized copy in a float64 run (76 MB ->
+  38 MB on DR1 TEST6, 1.4 GB on 346 M randoms). The density is the same to the
+  bit.
+- `baorecon.utils.numba_flags.FASTMATH` (`{"nnan", "ninf", "nsz"}`), the
+  fast-math subset that does not let LLVM contract or reorder the arithmetic.
+- The test workflow runs on pushes and pull requests to `collab` as well as
+  `main`.
+
+### Changed
+- Mass assignment and read-out work straight from the survey frame.
+  `DensityManager` no longer keeps a box-frame copy of the two catalogues for
+  the whole solve: the kernels take the box's lower corner (`min_corner`) and
+  move each coordinate to the box frame as they read it, in the same dtype, so
+  every grid and every displacement is the same bit for bit as before. `assign`
+  and `readout` take `survey_frame=True`, `interpolate_vector_field` takes
+  `min_corner`, the potential-differentiation kernels take `min_corner` and
+  `pbc`, every solver's `read_displacement_at` takes `survey_frame`
+  (`PoissonSolver` now carries `pbc`, which the multigrid solver did not know),
+  and `data_pos_box`/`random_pos_box` are properties computed on request. `pbc`
+  governs the coordinate and the stencil alike: a periodic box wraps the
+  coordinate into `[0, boxsize)` and wraps the stencil, a non-periodic one does
+  neither. DR1 TEST6 float64: solve peak 2.09 -> 1.84 GB, 4.9 -> 4.2 s; at
+  346 M randoms the two `(N, 3)` copies were 16 GB. The two helpers that cast
+  the corner to the positions' dtype (one in `mas/_interface.py`, a twin on
+  `PoissonSolver`) are gone; each call site has the one expression.
+- The 18 catalogue kernels (`mas/cpu.py`, `field_ops/cpu.py`, `utils/frames.py`)
+  use `numba_flags.FASTMATH` instead of `fastmath=True`. Full fast-math let
+  LLVM contract and reorder the arithmetic differently for different
+  specialisations of the same source and even from one compilation to the
+  next: the shift and rotation kernels moved 0.1-11 % of the float32 positions
+  by one ulp every time numba rebuilt them, hidden by the on-disk cache. The
+  grid kernels keep `fastmath=True`. Verified on DR1 TEST6: old and new code
+  give identical products in float32 and float64, two fresh compilations
+  agree, and the kernels run as fast.
+- A run is reproducible bit for bit. The reconstructor hands its dtype to the
+  multigrid solver, which was being built at its own default (float32)
+  whatever the run's precision, so a float64 run solved in single precision
+  and a 1e-16 wobble in the density became a last-bit flip in the products;
+  its two remaining float32 literals (the box, the cell size) follow the dtype
+  too, and the potential, the displacement and the shifted positions come out
+  at the working precision. The line-of-sight direction sums are chunked in a
+  fixed way and added in a fixed order, so the cone axis is the same bits on
+  any number of threads (a `prange` reduction added the threads' partial sums
+  in whatever order they finished). DR1 TEST6 in float64, 10 threads against
+  16: frame, positions, density, potential and shifted positions identical.
+  The float32 products are unchanged.
+- The CPU kernels (mass assignment, read-out, interpolation, gradient,
+  line-of-sight projection) are compiled with `cache=True`, so a cold process
+  reuses the machine code numba wrote to `__pycache__` instead of recompiling
+  (~1.5-2 s per run on the DR1 workload). Where the cache directory is not
+  writable numba compiles as before, silently.
+- The multigrid solver divides the potential by the bias in place: `np.divide`
+  allocated a second full grid for `phi / bias` while the fine-level solution
+  array was still alive. Same result, one transient grid less after the solve
+  (not at the peak, which is the density step).
 
 ### Fixed
 - `utils.mock_generator`: the Gaussian field behind `generate_gaussian_map` and
