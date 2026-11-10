@@ -2,7 +2,7 @@ import numpy as np
 from baorecon.utils.loggers import setup_logger
 logger = setup_logger(__name__)
 
-def generate_gaussian_map(pk_func, side, spacing):
+def generate_gaussian_map(pk_func, side, spacing, seed=None):
 
     """
     Generates a Gaussian random field from an input power spectrum in a given volume.
@@ -15,6 +15,10 @@ def generate_gaussian_map(pk_func, side, spacing):
         The physical size of the side of the cubic volume.
     spacing : float
         The grid spacing for the Fourier transform. Determines the resolution of the grid.
+    seed : int or None, optional
+        Seed for the random phases and amplitudes. ``None`` (default) draws from
+        NumPy's global generator, so ``np.random.seed`` keeps working; an integer
+        uses a private ``np.random.default_rng(seed)`` and makes the field reproducible.
 
     Returns:
     --------
@@ -51,10 +55,11 @@ def generate_gaussian_map(pk_func, side, spacing):
     knorm = np.sqrt(KX**2+KY**2+KZ**2)
     pks = pk_func(knorm)
 
+    rng = np.random if seed is None else np.random.default_rng(seed)
     #generate a random phase
-    phase = np.random.uniform(size=pks.shape)*2*np.pi
+    phase = rng.uniform(size=pks.shape)*2*np.pi
     #generate a norm
-    delta_k_norm = np.random.normal(size=pks.shape)*np.sqrt(pks*volume)
+    delta_k_norm = rng.normal(size=pks.shape)*np.sqrt(pks*volume)
 
     delta_k_norm[0,0,0]=0
 
@@ -65,7 +70,7 @@ def generate_gaussian_map(pk_func, side, spacing):
     return delta_k, delta_x
 
 
-def generate_lognormal_map(pk_func, side, spacing):
+def generate_lognormal_map(pk_func, side, spacing, seed=None):
     """
     Generates a lognormal random field from an input power spectrum in a given volume.
     
@@ -77,6 +82,10 @@ def generate_lognormal_map(pk_func, side, spacing):
         The physical size of the side of the cubic volume.
         spacing : float
         The grid spacing for the Fourier transform. Determines the resolution of the grid.
+        seed : int or None, optional
+        Seed for the random phases and amplitudes. ``None`` (default) draws from
+        NumPy's global generator, so ``np.random.seed`` keeps working; an integer
+        uses a private ``np.random.default_rng(seed)`` and makes the field reproducible.
         
         Returns:
         --------
@@ -120,8 +129,9 @@ def generate_lognormal_map(pk_func, side, spacing):
     pk_g = np.fft.rfftn(xi_g) * spacing**3
 
     # generate G(k), a gaussian field in Fourier space with power spectrum pk_g
-    phase = np.random.uniform(size=pks.shape)*2*np.pi                   #random phase
-    G_k_norm = np.random.normal(size=pks.shape)*np.sqrt(pk_g*volume)    #such that <G_k G_k^*> = P_g(k)
+    rng = np.random if seed is None else np.random.default_rng(seed)
+    phase = rng.uniform(size=pks.shape)*2*np.pi                   #random phase
+    G_k_norm = rng.normal(size=pks.shape)*np.sqrt(pk_g*volume)    #such that <G_k G_k^*> = P_g(k)
     G_k_norm[0,0,0] = 0
 
     G_k = G_k_norm *(np.cos(phase)+1j*np.sin(phase))

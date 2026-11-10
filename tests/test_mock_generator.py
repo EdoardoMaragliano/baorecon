@@ -59,3 +59,25 @@ def test_poisson_sample_from_lognormal_map():
     assert 0.5 * n_objects < len(points) < 2.0 * n_objects
     assert points.min() >= 0.0
     assert points.max() <= SIDE
+
+
+@pytest.mark.parametrize("generate", [generate_gaussian_map, generate_lognormal_map])
+def test_seed_makes_the_field_reproducible_and_independent_of_the_global_state(generate):
+    def field(**kwargs):
+        out = generate(_pk, SIDE, SPACING, **kwargs)
+        return out[-1] if isinstance(out, tuple) else out
+
+    np.random.seed(0)
+    a = field(seed=123)
+    np.random.seed(1)  # a different global state must not matter when a seed is given
+    b = field(seed=123)
+    c = field(seed=124)
+    np.testing.assert_array_equal(a, b)
+    assert not np.allclose(a, c)
+
+    # seed=None keeps using the global generator, so np.random.seed still controls it.
+    np.random.seed(7)
+    d = field()
+    np.random.seed(7)
+    e = field()
+    np.testing.assert_array_equal(d, e)

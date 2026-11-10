@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+- `generate_gaussian_map` and `generate_lognormal_map` take `seed=None`. An
+  integer draws the phases and amplitudes from a private
+  `np.random.default_rng(seed)`, making the field reproducible regardless of
+  the global NumPy state; `None` keeps the previous behaviour (global
+  generator, so `np.random.seed` still applies).
+
 ### Fixed
 - `BAOReconstructor.run_reconstruction` compared the solver *object* with the
   string `'multigrid'`, so the branch meant for the multigrid solver never ran
