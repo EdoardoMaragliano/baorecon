@@ -96,6 +96,39 @@ reconstructor = BAOReconstructor(
 shifted_galaxies, shifted_randoms = reconstructor.run_reconstruction()
 ```
 
+#### Step by step
+
+`run_reconstruction()` is a thin wrapper around three steps, each available on
+its own. Everything is lazy: a field is computed the first time you ask for it
+and cached afterwards.
+
+```python
+# 1. Density: paint data and randoms on the mesh, smooth, build the overdensity
+delta = reconstructor.delta_on_mesh            # (nx, ny, nz)
+
+# 2. Solve for the displacement field on the mesh
+solver = reconstructor.solver                  # FFTSolverCPU/GPU or MultigridSolver
+psi_mesh = solver.displacement                 # (nx, ny, nz, 3)
+phi = solver.potential                         # (nx, ny, nz)
+
+# 3. Read the displacement back at the tracers and shift them
+data_pos = reconstructor.data_pos              # inputs, cast to the working precision
+random_pos = reconstructor.random_pos
+
+psi_data = reconstructor.interpolate_displacement(data_pos)      # (N, 3), real-space Psi
+psi_rand = reconstructor.interpolate_displacement(random_pos)
+
+# Redshift-space term f (Psi . n) n along the configured line of sight
+rsd_data = reconstructor.get_rsd_displacement(psi_data, data_pos)
+rsd_rand = reconstructor.get_rsd_displacement(psi_rand, random_pos)
+
+shifted_galaxies = data_pos - (psi_data + rsd_data)
+shifted_randoms = random_pos - (psi_rand + rsd_rand)   # rec-sym; for rec-iso drop rsd_rand
+```
+
+This reproduces `run_reconstruction()` to rounding. With `pbc=True` the
+shifted positions are additionally wrapped back into the box.
+
 Instead of `nmesh`/`boxsize` you may pass a target `cellsize` (mutually
 exclusive with them); the per-axis grid is then derived from the catalogue
 extent and rounded up to a multigrid-friendly size.
